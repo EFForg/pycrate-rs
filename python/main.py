@@ -1,8 +1,13 @@
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union, Any
 from pycrate_core import elt
+from pycrate_core.base import Uint, Buf, Uint8, Uint16
+from pycrate_csn1.csnobj import CSN1List
 from pycrate_mobile import NASLTE
-from pycrate_mobile.TS24007 import IE
+from pycrate_mobile.TS24007 import IE, Layer3E
+from pycrate_mobile.TS24301_EMM import EMMHeader
 from enum import StrEnum, IntEnum, auto
+
+from pycrate_mobile.TS24301_IE import LCSClientId
 
 
 RESERVED_WORDS = [
@@ -30,6 +35,7 @@ def get_layer3_wrapper(obj: elt.Envelope) -> Optional[Layer3Wrapper]:
 
 
 def upper_camel_case(s: str) -> str:
+    s = sanitize(s)
     if ' ' in s:
         return s.title().replace(' ', '')
     else:
@@ -37,10 +43,24 @@ def upper_camel_case(s: str) -> str:
 
 
 def snake_case(s: str) -> str:
+    s = sanitize(s)
     snake_cased = s.replace(' ', '_').lower()
     if snake_cased in RESERVED_WORDS:
         snake_cased = snake_cased[:-1]
     return snake_cased
+
+
+def sanitize(s: str) -> str:
+    s = replace_forbidden_character(s)
+    return s
+
+
+def replace_forbidden_character(s: str) -> str:
+    s = s.replace('+', 'Plus')
+    s = s.replace('-', 'Minus')
+    s = s.replace('(', '')
+    s = s.replace(')', '')
+    return s
 
 
 def derives() -> str:
@@ -71,11 +91,15 @@ class RustPrimitiveType(IntEnum):
 
     @staticmethod
     def from_pycrate(obj: elt.Atom) -> 'RustPrimitiveType':
+        if isinstance(obj, Buf):
+            return RustPrimitiveType.VecU8
+        if isinstance(obj, Uint8):
+            return RustPrimitiveType.U8
+        if isinstance(obj, Uint16):
+            return RustPrimitiveType.U16
         type_name = type(obj).__name__
         return {
             'Uint': RustPrimitiveType.U32,
-            'Uint8': RustPrimitiveType.U8,
-            'Buf': RustPrimitiveType.VecU8
         }[type_name]
 
 
@@ -83,38 +107,49 @@ class RustStructField:
     def __init__(
         self,
         name: str,
-        type: 'RustPrimitiveType | RustStruct | RustEnum',
+        type: 'Optional[RustPrimitiveType | RustStruct | RustEnum]',
+        layer3_wrapper: Optional[Layer3Wrapper],
         bit_length: Optional[int],
+        bit_padding: Optional[int],
     ):
         self.type = type
         self.name = snake_case(name)
+        self.layer3_wrapper = layer3_wrapper
         self.bit_length = bit_length
+        self.bit_padding = bit_padding
 
     def to_rust(self) -> str:
-        type_name = self.type.rust_type_name()
-        if not isinstance(self.type, RustPrimitiveType) and self.type.layer3_wrapper is not None:
-            wrapper_name = str(self.type.layer3_wrapper)
+        type_name = 'None' if self.type is None else self.type.rust_type_name()
+        if self.layer3_wrapper is not None:
+            wrapper_name = str(self.layer3_wrapper)
             type_name = f"{wrapper_name}<{type_name}>"
+        deku_attrs = []
         # deku bits attribute goes on the enum decl
-        if self.bit_length is None or isinstance(self.type, RustEnum):
-            deku_part = ''
-        else:
-            deku_part = f'#[deku(bits = {self.bit_length})] '
+        if self.bit_length is not None and not isinstance(self.type, RustEnum):
+            deku_attrs.append(f'bits = {self.bit_length}')
+        if self.bit_padding is not None:
+            deku_attrs.append(f'pad_bits_before = {self.bit_padding}')
+        deku_part = ''
+        if len(deku_attrs):
+            deku_part = f'#[deku({', '.join(deku_attrs)})] '
         return f'{deku_part}{self.name}: {type_name},'
 
 
 class RustStruct:
-    def __init__(self, name: str, layer3_wrapper: Optional[Layer3Wrapper] = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        layer3_wrapper: Optional[Layer3Wrapper] = None,
+    ) -> None:
         self.fields: List[RustStructField] = []
         self.layer3_wrapper = layer3_wrapper
         self.name = upper_camel_case(name)
 
     @staticmethod
-    def from_pycrate(obj: elt.Envelope, prefix: Optional[str]) -> 'RustStruct':
-        name = obj._name
-        if prefix:
-            name = prefix + name
-        return RustStruct(name, get_layer3_wrapper(obj))
+    def from_pycrate(
+        obj: elt.Envelope,
+    ) -> 'RustStruct':
+        return RustStruct(obj._name, get_layer3_wrapper(obj))
 
     def add_field(self, field: RustStructField) -> None:
         self.fields.append(field)
@@ -142,14 +177,20 @@ def indent(s: str, num_indents=1) -> str:
 class RustEnumVariant:
     def __init__(self, name: str, value: int):
         self.name = upper_camel_case(name)
-        self.value = value
+        self.values = [value]
 
     def to_rust(self) -> str:
-        return f'#[deku(id_pat = {self.value})] {self.name},'
+        id_pat = ' | '.join([str(v) for v in self.values])
+        return f'#[deku(id_pat = "{id_pat}")] {self.name},'
 
 
 class RustEnum:
-    def __init__(self, name: str, type: RustPrimitiveType, bit_length: int) -> None:
+    def __init__(
+        self,
+        name: str,
+        type: RustPrimitiveType,
+        bit_length: int,
+    ) -> None:
         self.variants: List[RustEnumVariant] = []
         self.type = type
         self.bit_length = bit_length
@@ -157,12 +198,9 @@ class RustEnum:
         self.name = upper_camel_case(name)
 
     @staticmethod
-    def from_pycrate(obj: elt.Atom, prefix: Optional[str]) -> 'RustEnum':
-        name = obj._name
-        if prefix:
-            name = prefix + obj._name
+    def from_pycrate(obj: elt.Atom, prefix: str) -> 'RustEnum':
         rust_enum = RustEnum(
-            name,
+            prefix + obj._name,
             RustPrimitiveType.from_pycrate(obj),
             obj.get_bl(),
         )
@@ -172,6 +210,10 @@ class RustEnum:
         return rust_enum
 
     def add_variant(self, variant: RustEnumVariant):
+        for existing in self.variants:
+            if variant.name == existing.name:
+                existing.values += variant.values
+                return
         self.variants.append(variant)
 
     def rust_type_name(self) -> str:
@@ -190,95 +232,167 @@ enum {self.name} {{
         return '\n'.join([indent(var) for var in variants])
 
 
-class NoneType:
-    def __init__(self, layer3_wrapper: Layer3Wrapper):
-        self.layer3_wrapper = layer3_wrapper
+class RustTypeCache:
+    def __init__(self) -> None:
+        self.struct_cache: Dict[str, RustStruct] = {}
+        self.enum_cache: Dict[str, RustEnum] = {}
+        self.unresolved_structs: List[Tuple[RustStruct, elt.Envelope]] = []
 
-    def rust_type_name(self) -> str:
-        return 'NoneType'
+    def get_rust_struct(self, pyobj: elt.Envelope, add_to_unresolved = True) -> RustStruct:
+        if pyobj._name in self.struct_cache:
+            return self.struct_cache[pyobj._name]
+        rust_struct = RustStruct.from_pycrate(pyobj)
+        if add_to_unresolved:
+            self.unresolved_structs.append((rust_struct, pyobj))
+        self.struct_cache[rust_struct.name] = rust_struct
+        return rust_struct
+
+    def resolve_struct(self):
+        rust_struct, pyobj = self.unresolved_structs.pop()
+        print('resolving', rust_struct.name, pyobj)
+        bit_padding = None
+        for field in pyobj:
+            bit_length = None
+            if isinstance(field, elt.Atom):
+                if isinstance(field, Buf):
+                    rust_type = RustPrimitiveType.VecU8
+                    bit_length = field.get_bl()
+                elif field._dic:
+                    rust_enum = self.get_rust_enum(field, rust_struct.name)
+                    bit_length = field.get_bl()
+                    rust_type = rust_enum
+                else:
+                    rust_type = RustPrimitiveType.from_pycrate(field)
+                    bit_length = field.get_bl()
+            elif isinstance(field, elt.Envelope):
+                rust_type = self.get_rust_struct(field)
+            else:
+                rust_type = None
+            field = RustStructField(
+                field._name,
+                rust_type,
+                None,
+                bit_length,
+                bit_padding,
+            )
+            rust_struct.add_field(field)
+
+    def get_rust_enum(self, pyobj: Any, prefix: str) -> RustEnum:
+        name = prefix + pyobj._name
+        if name in self.enum_cache:
+            return self.enum_cache[name]
+        rust_enum = RustEnum.from_pycrate(pyobj, prefix)
+        self.enum_cache[rust_enum.name] = rust_enum
+        return rust_enum
 
 
 class RustModule:
-    def __init__(self, name: str) -> None:
-        self.items: List[Union[RustStruct, RustEnum]] = []
+    def __init__(self, pyobj: Layer3E) -> None:
+        self.cache = RustTypeCache()
+        self.pyobj = pyobj
+        self.base_struct = self.cache.get_rust_struct(pyobj, False)
 
-    def _get_pycrate_field(
-        self,
-        obj: elt.Atom | elt.Envelope,
-        prefix: str
-    ) -> RustStructField:
-        print('field', type(obj), obj._name)
-        bit_length = None
-        rust_type: RustPrimitiveType | RustEnum | RustStruct
-        if isinstance(obj, elt.Atom):
-            if obj._dic:
-                rust_enum = RustEnum.from_pycrate(obj, prefix)
-                self.add_item(rust_enum)
-                bit_length = obj.get_bl()
-                rust_type = rust_enum
+    def resolve_types(self) -> None:
+        bit_padding = None
+
+        # skip the EMMHeader
+        assert isinstance(self.pyobj._GEN[0], EMMHeader)
+        for item in self.pyobj._GEN[1:]:
+            layer3_wrapper = get_layer3_wrapper(item)
+
+            # the only time we don't have a layer 3 TLV is bit padding
+            if layer3_wrapper is None:
+                assert isinstance(item, Uint)
+                assert item._name == 'spare'
+                bit_padding = item.get_bl()
+                continue
+
+            # prepare the layer 3 TLV's inner value
+            if item._IE_stat is not None:
+                inner = item._IE_stat
+                # check for unsupported types (these will be NoneType)
+                if isinstance(inner, (
+                    elt.Sequence,
+                    elt.Array,
+                    CSN1List,
+                    LCSClientId,
+                )):
+                    field = RustStructField(
+                        item._name,
+                        None,
+                        layer3_wrapper,
+                        None,
+                        bit_padding,
+                    )
+                    self.base_struct.add_field(field)
+                    continue
+                # check for Buf-type IEs
+                if isinstance(inner, elt.Atom):
+                    field = RustStructField(
+                        item._name,
+                        RustPrimitiveType.from_pycrate(inner),
+                        layer3_wrapper,
+                        None,
+                        bit_padding
+                    )
+                    self.base_struct.add_field(field)
+                    continue
+                field_struct = self.cache.get_rust_struct(inner)
+                field = RustStructField(
+                    item._name,
+                    field_struct,
+                    layer3_wrapper,
+                    None,
+                    bit_padding,
+                )
+                self.base_struct.add_field(field)
             else:
-                rust_type = RustPrimitiveType.from_pycrate(obj)
-                bit_length = obj.get_bl()
-        elif isinstance(obj, elt.Envelope):
-            rust_type = self.add_pycrate_obj(obj, prefix)
-        return RustStructField(
-            obj._name,
-            rust_type,
-            bit_length,
-        )
+                inner = item._V
+                if inner._dic is not None:
+                    field_enum = self.cache.get_rust_enum(inner, item._name)
+                    field = RustStructField(
+                        item._name,
+                        field_enum,
+                        layer3_wrapper,
+                        None,
+                        bit_padding,
+                    )
+                    self.base_struct.add_field(field)
+                else:
+                    field = RustStructField(
+                        item._name,
+                        None,
+                        layer3_wrapper,
+                        None,
+                        bit_padding,
+                    )
+                    self.base_struct.add_field(field)
 
-    def add_pycrate_obj(self, obj: elt.Atom | elt.Envelope, prefix: Optional[str] = None) -> RustEnum | RustStruct | NoneType:
-        print('obj', type(obj), obj._name)
-        if isinstance(obj, elt.Atom):
-            if obj._dic:
-                return self.add_item(RustEnum.from_pycrate(obj, prefix))
-            else:
-                raise ValueError(f'toplevel primitive obj {obj}')
-        elif isinstance(obj, IE):
-            layer3_wrapper = get_layer3_wrapper(obj)
-            assert layer3_wrapper is not None
-            print('wrapper', layer3_wrapper)
-            inner = obj._IE_stat
-            if inner is None:
-                inner = obj._V
-            if isinstance(inner, elt.Atom) or isinstance(inner, elt.Sequence):
-                return NoneType(layer3_wrapper)
-            item = self.add_pycrate_obj(inner, prefix)
-            assert not isinstance(item, NoneType)
-            item.name = obj._name
-            item.layer3_wrapper = layer3_wrapper
-            return item
-        elif isinstance(obj, elt.Envelope):
-            rust_struct = RustStruct.from_pycrate(obj, prefix)
-            for sub in obj:
-                rust_struct.add_field(self._get_pycrate_field(sub, rust_struct.name))
-            return self.add_item(rust_struct)
-        else:
-            raise ValueError(f'unknown obj {obj}')
-
-    def add_item(self, item: RustStruct | RustEnum) -> RustStruct | RustEnum:
-        for existing_item in self.items:
-            if item.name == existing_item.name:
-                raise ValueError(f'Item with name {item.name} already exists')
-        self.items.append(item)
-        return item
+        while len(self.cache.unresolved_structs):
+            self.cache.resolve_struct()
 
     def to_rust(self) -> str:
-        return f'''\
+        emm_header_names = [
+            'EMMHeaderProtDisc',
+            'EMMHeaderSecHdr',
+            'EMMHeaderType',
+        ]
+        structs = [struct for name, struct in self.cache.struct_cache.items() if name != 'EMMHeader']
+        enums = [enum for name, enum in self.cache.enum_cache.items() if name not in emm_header_names]
+        return f"""
 use deku::prelude::*;
 use crate::nas::layer3::*;
 
-{self._items_to_rust()}'''
-
-    def _items_to_rust(self) -> str:
-        return '\n\n'.join([item.to_rust() for item in self.items])
+{'\n\n'.join([rust_struct.to_rust() for rust_struct in structs])}
+{'\n\n'.join([rust_enum.to_rust() for rust_enum in enums])}
+"""
 
 
 def main():
     for i in NASLTE.EMMTypeMOClasses:
         obj = NASLTE.EMMTypeMOClasses[i]()
-        module = RustModule('foo')
-        module.add_pycrate_obj(obj)
+        module = RustModule(obj)
+        module.resolve_types()
         print(module.to_rust())
 
 
