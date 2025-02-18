@@ -1,6 +1,6 @@
-use super::layer3::Type1V;
-
 use deku::prelude::*;
+
+use super::generated::*;
 
 #[derive(DekuRead, DekuWrite, Debug)]
 struct EMMHeader {
@@ -62,6 +62,83 @@ pub enum EMMType {
     #[deku(id = 105)] UplinkGenericNASTransport,
 }
 
+#[derive(Debug, Clone)]
+pub enum NASLTEMessage {
+    EMMAttachRequest(emmattachrequest::EMMAttachRequest),
+    EMMAttachAccept(emmattachaccept::EMMAttachAccept),
+    EMMAttachComplete(emmattachcomplete::EMMAttachComplete),
+    EMMAttachReject(emmattachreject::EMMAttachReject),
+    // EMMDetachRequestMT(emmdetachrequestmt::EMMDetachRequestMT),
+    EMMDetachRequestMO(emmdetachrequestmo::EMMDetachRequestMO),
+    EMMDetachAccept(emmdetachaccept::EMMDetachAccept),
+    EMMTrackingAreaUpdateRequest(emmtrackingareaupdaterequest::EMMTrackingAreaUpdateRequest),
+    EMMTrackingAreaUpdateAccept(emmtrackingareaupdateaccept::EMMTrackingAreaUpdateAccept),
+    EMMTrackingAreaUpdateComplete(emmtrackingareaupdatecomplete::EMMTrackingAreaUpdateComplete),
+    EMMTrackingAreaUpdateReject(emmtrackingareaupdatereject::EMMTrackingAreaUpdateReject),
+    EMMExtServiceRequest(emmextservicerequest::EMMExtServiceRequest),
+    EMMCPServiceRequest(emmcpservicerequest::EMMCPServiceRequest),
+    EMMServiceReject(emmservicereject::EMMServiceReject),
+    EMMServiceAccept(emmserviceaccept::EMMServiceAccept),
+    EMMGUTIReallocCommand(emmgutirealloccommand::EMMGUTIReallocCommand),
+    EMMGUTIReallocComplete(emmgutirealloccomplete::EMMGUTIReallocComplete),
+    EMMAuthenticationRequest(emmauthenticationrequest::EMMAuthenticationRequest),
+    EMMAuthenticationResponse(emmauthenticationresponse::EMMAuthenticationResponse),
+    EMMAuthenticationReject(emmauthenticationreject::EMMAuthenticationReject),
+    EMMAuthenticationFailure(emmauthenticationfailure::EMMAuthenticationFailure),
+    EMMIdentityRequest(emmidentityrequest::EMMIdentityRequest),
+    EMMIdentityResponse(emmidentityresponse::EMMIdentityResponse),
+    EMMSecurityModeCommand(emmsecuritymodecommand::EMMSecurityModeCommand),
+    EMMSecurityModeComplete(emmsecuritymodecomplete::EMMSecurityModeComplete),
+    EMMSecurityModeReject(emmsecuritymodereject::EMMSecurityModeReject),
+    EMMStatus(emmstatus::EMMStatus),
+    EMMInformation(emminformation::EMMInformation),
+    EMMDLNASTransport(emmdlnastransport::EMMDLNASTransport),
+    EMMULNASTransport(emmulnastransport::EMMULNASTransport),
+    EMMCSServiceNotification(emmcsservicenotification::EMMCSServiceNotification),
+    EMMDLGenericNASTransport(emmdlgenericnastransport::EMMDLGenericNASTransport),
+    EMMULGenericNASTransport(emmulgenericnastransport::EMMULGenericNASTransport)
+}
+
+pub fn parse_emm_nas(bytes: &[u8]) -> Result<NASLTEMessage, DekuError> {
+    let mut cursor = std::io::Cursor::new(bytes);
+    let mut reader = Reader::new(&mut cursor);
+    let header = EMMHeader::from_reader_with_ctx(&mut reader, ())?;
+    Ok(match header.emm_type {
+        EMMType::AttachRequest => NASLTEMessage::EMMAttachRequest(emmattachrequest::EMMAttachRequest::from_reader_with_ctx(&mut reader, ())?),
+        EMMType::AttachAccept => todo!(),
+        EMMType::AttachComplete => todo!(),
+        EMMType::AttachReject => todo!(),
+        EMMType::DetachRequest => todo!(),
+        EMMType::DetachAccept => todo!(),
+        EMMType::TrackingAreaUpdateRequest => todo!(),
+        EMMType::TrackingAreaUpdateAccept => todo!(),
+        EMMType::TrackingAreaUpdateComplete => todo!(),
+        EMMType::TrackingAreaUpdateReject => todo!(),
+        EMMType::ExtendedServiceRequest => todo!(),
+        EMMType::ControlPlaneServiceRequest => todo!(),
+        EMMType::ServiceReject => todo!(),
+        EMMType::ServiceAccept => todo!(),
+        EMMType::GUTIReallocationCommand => todo!(),
+        EMMType::GUTIReallocationComplete => todo!(),
+        EMMType::AuthenticationRequest => todo!(),
+        EMMType::AuthenticationResponse => todo!(),
+        EMMType::AuthenticationReject => todo!(),
+        EMMType::AuthenticationFailure => todo!(),
+        EMMType::IdentityRequest => NASLTEMessage::EMMIdentityRequest(emmidentityrequest::EMMIdentityRequest::from_reader_with_ctx(&mut reader, ())?),
+        EMMType::IdentityResponse => todo!(),
+        EMMType::SecurityModeCommand => todo!(),
+        EMMType::SecurityModeComplete => todo!(),
+        EMMType::SecurityModeReject => todo!(),
+        EMMType::EMMStatus => todo!(),
+        EMMType::EMMInformation => todo!(),
+        EMMType::DownlinkNASTransport => todo!(),
+        EMMType::UplinkNASTransport => todo!(),
+        EMMType::CSServiceNotification => todo!(),
+        EMMType::DownlinkGenericNASTransport => todo!(),
+        EMMType::UplinkGenericNASTransport => todo!(),
+    })
+}
+
 #[derive(DekuRead, DekuWrite, Debug)]
 #[deku(id_type = "u8", bits = 4)]
 enum ProtocolDiscriminator {
@@ -84,40 +161,10 @@ enum ProtocolDiscriminator {
     #[deku(id = 126)] FiveGMM,
 }
 
-#[derive(Debug, DekuRead)]
-struct EMMIdentityRequest {
-    pub header: EMMHeader,
-    #[deku(pad_bits_before = "4")]
-    pub id_type: Type1V<IDType>,
-}
-
-#[derive(Debug, DekuRead, DekuWrite)]
-#[deku(id_type = "u8")]
-enum IDType {
-    #[deku(id = 0)] NoIdentity,
-    #[deku(id = 1)] IMSI,
-    #[deku(id = 2)] IMEI,
-    #[deku(id = 3)] IMEISV,
-    #[deku(id = 4)] TMSI,
-    #[deku(id = 5)] TMGI,
-    #[deku(id = 6)] FFU,
-}
-
-#[derive(DekuRead, DekuWrite)]
-struct UERadioCapIDDelInd {
-    #[deku(pad_bits_before="1")]
-    pub del_request: DelRequest,
-}
-
-#[derive(DekuRead, DekuWrite)]
-#[deku(id_type = "u8", bits = 3)]
-enum DelRequest {
-    #[deku(id = 0)] NotRequested,
-    #[deku(id = 1)] Requested,
-}
-
 #[cfg(test)]
 mod tests {
+    use crate::nas::generated;
+
     use super::*;
 
     fn decode_hex(s: &str) -> Vec<u8> {
@@ -129,8 +176,8 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let bytes = decode_hex("07412208391185184409309005f0700000100030023ed031d127298080211001000010810600000000830600000000000d00000300ff0003130184000a000005000010005c0a009011034f18a6f15d0103c1000000000000");
-        let req = EMMIdentityRequest::from_bytes((&bytes, 0)).unwrap();
-        dbg!(req);
+        // let bytes = decode_hex("07412208391185184409309005f0700000100030023ed031d127298080211001000010810600000000830600000000000d00000300ff0003130184000a000005000010005c0a009011034f18a6f15d0103c1000000000000");
+        let bytes = decode_hex("075501");
+        dbg!(parse_emm_nas(&bytes));
     }
 }

@@ -1,3 +1,4 @@
+import os
 from typing import Dict, List, Optional, Tuple, Union, Any
 from pycrate_core import elt
 from pycrate_core.base import Uint, Buf, Uint8, Uint16
@@ -6,8 +7,9 @@ from pycrate_mobile import NASLTE
 from pycrate_mobile.TS24007 import IE, Layer3E
 from pycrate_mobile.TS24301_EMM import EMMHeader
 from enum import StrEnum, IntEnum, auto
-
 from pycrate_mobile.TS24301_IE import LCSClientId
+import inflect
+import re
 
 
 RESERVED_WORDS = [
@@ -36,8 +38,9 @@ def get_layer3_wrapper(obj: elt.Envelope) -> Optional[Layer3Wrapper]:
 
 def upper_camel_case(s: str) -> str:
     s = sanitize(s)
-    if ' ' in s:
-        return s.title().replace(' ', '')
+    s = s.replace('_', '')
+    if s[0].islower():
+        return s.title()
     else:
         return s
 
@@ -50,7 +53,14 @@ def snake_case(s: str) -> str:
     return snake_cased
 
 
+inflect_engine = inflect.engine()
 def sanitize(s: str) -> str:
+    starts_with_number = re.compile('^[0-9]+').search(s)
+    if starts_with_number:
+        match = starts_with_number[0]
+        number_word = inflect_engine.number_to_words(int(match))
+        number_word = number_word.replace('-', '')
+        s = s.replace(match, number_word)
     s = replace_forbidden_character(s)
     return s
 
@@ -60,13 +70,19 @@ def replace_forbidden_character(s: str) -> str:
     s = s.replace('-', 'Minus')
     s = s.replace('(', '')
     s = s.replace(')', '')
+    s = s.replace('/', '')
+    s = s.replace(',', '')
+    s = s.replace(';', '')
+    s = s.replace('.', '')
+    s = s.replace('"', '')
+    s = s.replace(' ', '')
     return s
 
 
 def derives() -> str:
     traits = [
         'DekuRead',
-        'DekuWrite',
+        # 'DekuWrite',
         'Debug',
         'Clone'
     ]
@@ -118,21 +134,34 @@ class RustStructField:
         self.bit_length = bit_length
         self.bit_padding = bit_padding
 
-    def to_rust(self) -> str:
-        type_name = 'None' if self.type is None else self.type.rust_type_name()
-        if self.layer3_wrapper is not None:
-            wrapper_name = str(self.layer3_wrapper)
-            type_name = f"{wrapper_name}<{type_name}>"
+    def _deku_attrs(self) -> str:
         deku_attrs = []
         # deku bits attribute goes on the enum decl
         if self.bit_length is not None and not isinstance(self.type, RustEnum):
-            deku_attrs.append(f'bits = {self.bit_length}')
+            if self.type == RustPrimitiveType.VecU8:
+                assert self.bit_length % 8 == 0
+                byte_length = int(self.bit_length / 8)
+                deku_attrs.append(f'count = "{byte_length}"')
+            else:
+                deku_attrs.append(f'bits = {self.bit_length}')
         if self.bit_padding is not None:
-            deku_attrs.append(f'pad_bits_before = {self.bit_padding}')
+            deku_attrs.append(f'pad_bits_before = "{self.bit_padding}"')
         deku_part = ''
         if len(deku_attrs):
             deku_part = f'#[deku({', '.join(deku_attrs)})] '
-        return f'{deku_part}{self.name}: {type_name},'
+        return deku_part
+
+    def to_rust(self) -> str:
+        # special case for Type4TLV<Vec<u8>>
+        if self.layer3_wrapper == Layer3Wrapper.Type4TLV:
+            if self.type == RustPrimitiveType.VecU8:
+                return f'pub {self.name}: Type4TLV<Layer3Buffer>,'
+        type_name = '()' if self.type is None else self.type.rust_type_name()
+        if self.layer3_wrapper is not None:
+            wrapper_name = str(self.layer3_wrapper)
+            type_name = f"{wrapper_name}<{type_name}>"
+        deku_part = self._deku_attrs()
+        return f'{deku_part}pub {self.name}: {type_name},'
 
 
 class RustStruct:
@@ -154,10 +183,29 @@ class RustStruct:
     def add_field(self, field: RustStructField) -> None:
         self.fields.append(field)
 
+    def _fix_all_duplicates(self) -> None:
+        dupe = self._find_duplicate_field_name()
+        while dupe is not None:
+            self._fix_duplicate_field(dupe)
+            dupe = self._find_duplicate_field_name()
+
+    def _find_duplicate_field_name(self) -> Optional[str]:
+        names = [field.name for field in self.fields]
+        for name in names:
+            if names.count(name) > 1:
+                return name
+        return None
+
+    def _fix_duplicate_field(self, name: str) -> None:
+        dupes = [field for field in self.fields if field.name == name]
+        for i, dupe in enumerate(dupes):
+            dupe.name += f"_{i + 1}"
+
     def to_rust(self) -> str:
+        self._fix_all_duplicates()
         return f'''\
 {derives()}
-struct {self.name} {{
+pub struct {self.name} {{
 {self._fields_to_rust()}
 }}'''
 
@@ -223,7 +271,7 @@ class RustEnum:
         return f'''\
 {derives()}
 #[deku(id_type = "{self.type.rust_type_name()}", bits = {self.bit_length})]
-enum {self.name} {{
+pub enum {self.name} {{
 {self._variants_to_rust()}
 }}'''
 
@@ -291,6 +339,7 @@ class RustModule:
         self.cache = RustTypeCache()
         self.pyobj = pyobj
         self.base_struct = self.cache.get_rust_struct(pyobj, False)
+        self.name = self.base_struct.name.lower()
 
     def resolve_types(self) -> None:
         bit_padding = None
@@ -367,6 +416,7 @@ class RustModule:
                         bit_padding,
                     )
                     self.base_struct.add_field(field)
+            bit_padding = None
 
         while len(self.cache.unresolved_structs):
             self.cache.resolve_struct()
@@ -388,13 +438,43 @@ use crate::nas::layer3::*;
 """
 
 
-def main():
+class RustModuleIndex:
+    def __init__(self) -> None:
+        self.modules: List[RustModule] = []
+
+    def add(self, module: RustModule) -> None:
+        self.modules.append(module)
+
+    def to_rust(self) -> str:
+        module_text = '\n'.join(f'pub mod {mod.name};' for mod in self.modules)
+        return f"""
+#![allow(unused_imports)]
+
+{module_text}"""
+
+    def generate_module(self, filepath: str) -> None:
+        index_path = os.path.join(filepath, 'mod.rs')
+        print(f'writing index to {index_path}')
+        with open(index_path, 'w') as f:
+            f.write(self.to_rust())
+
+        for mod in self.modules:
+            mod_path = os.path.join(filepath, f'{mod.name}.rs')
+            print(f'writing {mod.name} to {mod_path}')
+            with open(mod_path, 'w') as f:
+                f.write(mod.to_rust())
+
+
+def main(filepath: str):
+    index = RustModuleIndex()
     for i in NASLTE.EMMTypeMOClasses:
         obj = NASLTE.EMMTypeMOClasses[i]()
         module = RustModule(obj)
         module.resolve_types()
-        print(module.to_rust())
+        index.add(module)
+    index.generate_module(filepath)
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    main(sys.argv[1])
