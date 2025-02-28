@@ -82,9 +82,10 @@ def replace_forbidden_character(s: str) -> str:
 def derives() -> str:
     traits = [
         'DekuRead',
-        # 'DekuWrite',
+        # 'DekuWrite', # TODO: implement DekuWrite for
         'Debug',
-        'Clone'
+        'Serialize',
+        'Clone',
     ]
     return f'#[derive({', '.join(traits)})]'
 
@@ -105,6 +106,15 @@ class RustPrimitiveType(IntEnum):
             return 'Vec<u8>'
         return self.name.lower()
 
+    def is_big_endian(self) -> bool:
+        return self in [
+            RustPrimitiveType.U16,
+            RustPrimitiveType.I16,
+            RustPrimitiveType.U32,
+            RustPrimitiveType.I32,
+            RustPrimitiveType.F32,
+        ]
+
     @staticmethod
     def from_pycrate(obj: elt.Atom) -> 'RustPrimitiveType':
         if isinstance(obj, Buf):
@@ -114,9 +124,15 @@ class RustPrimitiveType(IntEnum):
         if isinstance(obj, Uint16):
             return RustPrimitiveType.U16
         type_name = type(obj).__name__
-        return {
-            'Uint': RustPrimitiveType.U32,
-        }[type_name]
+        bit_len = obj.get_bl()
+        assert type_name == 'Uint'
+        if bit_len <= 8:
+            return RustPrimitiveType.U8
+        elif bit_len <= 16:
+            return RustPrimitiveType.U16
+        elif bit_len <= 32:
+            return RustPrimitiveType.U32
+        raise ValueError('unknown primtive type', obj)
 
 
 class RustStructField:
@@ -146,6 +162,8 @@ class RustStructField:
                 deku_attrs.append(f'bits = {self.bit_length}')
         if self.bit_padding is not None:
             deku_attrs.append(f'pad_bits_before = "{self.bit_padding}"')
+        if self.type is not None and self.type.is_big_endian():
+            deku_attrs.append('endian = "big"')
         deku_part = ''
         if len(deku_attrs):
             deku_part = f'#[deku({', '.join(deku_attrs)})] '
@@ -201,6 +219,9 @@ class RustStruct:
         for i, dupe in enumerate(dupes):
             dupe.name += f"_{i + 1}"
 
+    def is_big_endian(self) -> bool:
+        return False
+
     def to_rust(self) -> str:
         self._fix_all_duplicates()
         return f'''\
@@ -244,6 +265,9 @@ class RustEnum:
         self.bit_length = bit_length
         self.layer3_wrapper: Optional[Layer3Wrapper] = None
         self.name = upper_camel_case(name)
+
+    def is_big_endian(self) -> bool:
+        return self.type.is_big_endian()
 
     @staticmethod
     def from_pycrate(obj: elt.Atom, prefix: str) -> 'RustEnum':
@@ -431,6 +455,7 @@ class RustModule:
         enums = [enum for name, enum in self.cache.enum_cache.items() if name not in emm_header_names]
         return f"""
 use deku::prelude::*;
+use serde::Serialize;
 use crate::nas::layer3::*;
 
 {'\n\n'.join([rust_struct.to_rust() for rust_struct in structs])}
