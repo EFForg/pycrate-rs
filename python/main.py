@@ -17,7 +17,7 @@ RESERVED_WORDS = [
 ]
 
 
-class Layer3Wrapper(StrEnum):
+class Layer3Type(StrEnum):
     Type1V = 'Type1V'
     Type1TV = 'Type1TV'
     Type2 = 'Type2'
@@ -28,10 +28,29 @@ class Layer3Wrapper(StrEnum):
     Type6LVE = 'Type6LVE'
     Type6TLVE = 'Type6TLVE'
 
+    def is_tagged(self) -> bool:
+        return self in [
+            Layer3Type.Type1TV,
+            Layer3Type.Type3TV,
+            Layer3Type.Type4TLV,
+            Layer3Type.Type6TLVE,
+        ]
+
+
+class Layer3Wrapper:
+    def __init__(self, obj: elt.Envelope) -> None:
+        self.type = Layer3Type(type(obj).__name__)
+        if self.type.is_tagged():
+            assert obj[0]._name == 'T'
+            assert isinstance(obj[0], Uint)
+            self.tag = obj[0].get_val()
+        else:
+            self.tag = None
+
 
 def get_layer3_wrapper(obj: elt.Envelope) -> Optional[Layer3Wrapper]:
     try:
-        return Layer3Wrapper(type(obj).__name__)
+        return Layer3Wrapper(obj)
     except ValueError:
         return None
 
@@ -76,6 +95,7 @@ def replace_forbidden_character(s: str) -> str:
     s = s.replace('.', '')
     s = s.replace('"', '')
     s = s.replace(' ', '')
+    s = s.replace('=', 'Equals')
     return s
 
 
@@ -152,7 +172,8 @@ class RustStructField:
 
     def _deku_attrs(self) -> str:
         deku_attrs = []
-        # deku bits attribute goes on the enum decl
+        # if we have a bit_length and we're not an enum, add a deku attr
+        # declaring it. (enum bitlengths go on the enum decl)
         if self.bit_length is not None and not isinstance(self.type, RustEnum):
             if self.type == RustPrimitiveType.VecU8:
                 assert self.bit_length % 8 == 0
@@ -164,6 +185,9 @@ class RustStructField:
             deku_attrs.append(f'pad_bits_before = "{self.bit_padding}"')
         if self.type is not None and self.type.is_big_endian():
             deku_attrs.append('endian = "big"')
+        if self.layer3_wrapper is not None:
+            if self.layer3_wrapper.tag is not None:
+                deku_attrs.append(f'ctx = "Tag({self.layer3_wrapper.tag})"')
         deku_part = ''
         if len(deku_attrs):
             deku_part = f'#[deku({', '.join(deku_attrs)})] '
@@ -171,12 +195,12 @@ class RustStructField:
 
     def to_rust(self) -> str:
         # special case for Type4TLV<Vec<u8>>
-        if self.layer3_wrapper == Layer3Wrapper.Type4TLV:
-            if self.type == RustPrimitiveType.VecU8:
-                return f'pub {self.name}: Type4TLV<Layer3Buffer>,'
         type_name = '()' if self.type is None else self.type.rust_type_name()
         if self.layer3_wrapper is not None:
-            wrapper_name = str(self.layer3_wrapper)
+            if self.layer3_wrapper.type == Layer3Type.Type4TLV:
+                if self.type == RustPrimitiveType.VecU8:
+                    type_name = 'Layer3Buffer'
+            wrapper_name = str(self.layer3_wrapper.type)
             type_name = f"{wrapper_name}<{type_name}>"
         deku_part = self._deku_attrs()
         return f'{deku_part}pub {self.name}: {type_name},'
@@ -297,6 +321,7 @@ class RustEnum:
 #[deku(id_type = "{self.type.rust_type_name()}", bits = {self.bit_length})]
 pub enum {self.name} {{
 {self._variants_to_rust()}
+{indent(f'#[deku(id_pat = "_")] Other({self.type.rust_type_name()}),')}
 }}'''
 
     def _variants_to_rust(self) -> str:
@@ -310,7 +335,11 @@ class RustTypeCache:
         self.enum_cache: Dict[str, RustEnum] = {}
         self.unresolved_structs: List[Tuple[RustStruct, elt.Envelope]] = []
 
-    def get_rust_struct(self, pyobj: elt.Envelope, add_to_unresolved = True) -> RustStruct:
+    def get_rust_struct(
+        self,
+        pyobj: elt.Envelope,
+        add_to_unresolved=True,
+    ) -> RustStruct:
         if pyobj._name in self.struct_cache:
             return self.struct_cache[pyobj._name]
         rust_struct = RustStruct.from_pycrate(pyobj)
