@@ -1,10 +1,11 @@
 use std::io::{Cursor, Read, Seek};
 use std::marker::PhantomData;
-use std::fmt::Debug;
 
 use deku::ctx::{BitSize, ByteSize, Endian};
 use deku::prelude::*;
 use serde::Serialize;
+
+pub struct NeedsByteSize;
 
 // Used for container types which don't have a specific inner value
 #[derive(DekuRead, DekuWrite, Debug)]
@@ -105,7 +106,7 @@ pub enum Type3TV<T> {
     },
 }
 
-impl<'a, T> DekuReader<'a, (ByteSize, Tag)> for Type3TV<T> where T: DekuReader<'a> + Debug {
+impl<'a, T> DekuReader<'a, (ByteSize, Tag)> for Type3TV<T> where T: DekuReader<'a> {
     fn from_reader_with_ctx<R: Read+Seek>(
         reader: &mut Reader<R>,
         (ByteSize(byte_size), tag): (ByteSize, Tag)
@@ -127,7 +128,21 @@ pub struct Type4LV<T> {
     pub inner: T,
 }
 
-impl<'a, T> DekuReader<'a> for Type4LV<T> where T: DekuReader<'a> + std::fmt::Debug {
+impl<'a, T> DekuReader<'a, NeedsByteSize> for Type4LV<T> where T: DekuReader<'a, ByteSize> {
+    fn from_reader_with_ctx<R: Read+Seek>(
+        reader: &mut Reader<R>,
+        _: NeedsByteSize
+    ) -> Result<Self, DekuError> {
+        let length = u8::from_reader_with_ctx(reader, ())?;
+        let buf = read_bytes_from_reader(reader, length as usize)?;
+        let mut cursor = Cursor::new(buf);
+        let mut inner_reader = Reader::new(&mut cursor);
+        let inner = T::from_reader_with_ctx(&mut inner_reader, ByteSize(length as usize))?;
+        Ok(Self { length, inner })
+    }
+}
+
+impl<'a, T> DekuReader<'a> for Type4LV<T> where T: DekuReader<'a> {
     fn from_reader_with_ctx<R: Read+Seek>(
         reader: &mut Reader<R>,
         _: ()
@@ -198,10 +213,10 @@ pub enum Type4TLV<T> {
     }
 }
 
-impl<'a> DekuReader<'a, Tag> for Type4TLV<Layer3Buffer> {
+impl<'a, T> DekuReader<'a, (Tag, NeedsByteSize)> for Type4TLV<T> where T: DekuReader<'a, ByteSize> {
     fn from_reader_with_ctx<R: Read+Seek>(
         reader: &mut Reader<R>,
-        tag: Tag
+        (tag, _): (Tag, NeedsByteSize)
     ) -> Result<Self, DekuError> {
         if !check_tag(reader, BitSize(8), tag)? {
             return Ok(Self::None);
@@ -210,7 +225,7 @@ impl<'a> DekuReader<'a, Tag> for Type4TLV<Layer3Buffer> {
         let buf = read_bytes_from_reader(reader, length as usize)?;
         let mut cursor = Cursor::new(buf);
         let mut inner_reader = Reader::new(&mut cursor);
-        let inner = Layer3Buffer::from_reader_with_ctx(&mut inner_reader, ByteSize(length as usize))?;
+        let inner = T::from_reader_with_ctx(&mut inner_reader, ByteSize(length as usize))?;
         Ok(Self::Some { tag: tag.into(), length, inner })
     }
 }

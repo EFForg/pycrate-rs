@@ -38,6 +38,14 @@ class Layer3Type(StrEnum):
             Layer3Type.Type6TLVE,
         ]
 
+    def is_variable_length(self) -> bool:
+        return self in [
+            Layer3Type.Type4LV,
+            Layer3Type.Type4TLV,
+            Layer3Type.Type6LVE,
+            Layer3Type.Type6TLVE,
+        ]
+
     def is_tagged(self) -> bool:
         return self in [
             Layer3Type.Type1TV,
@@ -179,6 +187,10 @@ class RustStructField:
         self.layer3_wrapper = layer3_wrapper
         self.bit_length = bit_length
         self.bit_padding = bit_padding
+        
+        # whether this field should be conditionally parsed based on how many
+        # bytes remain
+        self.is_optional = False
 
     def _deku_attrs(self) -> str:
         deku_attrs = []
@@ -197,9 +209,20 @@ class RustStructField:
             deku_attrs.append(f'pad_bits_before = "{self.bit_padding}"')
         if self.type is not None and self.type.is_big_endian():
             deku_attrs.append('endian = "big"')
+        if self.is_optional:
+            deku_attrs.append('cond = "deku::byte_offset < byte_size"')
+        ctx = []
+        is_layer3_buffer = False
         if self.layer3_wrapper is not None:
             if self.layer3_wrapper.tag is not None:
-                deku_attrs.append(f'ctx = "Tag({self.layer3_wrapper.tag})"')
+                ctx.append(f'Tag({self.layer3_wrapper.tag})')
+            if self.type == RustPrimitiveType.VecU8:
+                is_layer3_buffer = True
+        is_variable_bitfield = isinstance(self.type, RustStruct) and self.type.is_variable_bitfield
+        if is_variable_bitfield or is_layer3_buffer:
+            ctx.append("NeedsByteSize")
+        if len(ctx):
+            deku_attrs.append(f'ctx = "{', '.join(ctx)}"')
         deku_part = ''
         if len(deku_attrs):
             deku_part = f'#[deku({', '.join(deku_attrs)})] '
@@ -222,19 +245,24 @@ class RustStruct:
     def __init__(
         self,
         name: str,
-        layer3_wrapper: Optional[Layer3Wrapper] = None,
     ) -> None:
         self.fields: List[RustStructField] = []
-        self.layer3_wrapper = layer3_wrapper
         self.name = upper_camel_case(name)
+
+        # Some of these structs are variable-sized bitfields which whose fields
+        # should be optionally parsed based on the byte-size of the entire
+        # struct
+        self.is_variable_bitfield = self.name.endswith('Cap')
 
     @staticmethod
     def from_pycrate(
         obj: elt.Envelope,
     ) -> 'RustStruct':
-        return RustStruct(obj._name, get_layer3_wrapper(obj))
+        return RustStruct(obj._name)
 
     def add_field(self, field: RustStructField) -> None:
+        if self.is_variable_bitfield:
+            field.is_optional = True
         self.fields.append(field)
 
     def _fix_all_duplicates(self) -> None:
@@ -260,8 +288,11 @@ class RustStruct:
 
     def to_rust(self) -> str:
         self._fix_all_duplicates()
+        deku_ctx = ''
+        if self.is_variable_bitfield:
+            deku_ctx = '\n#[deku(ctx = "ByteSize(byte_size): ByteSize")]'
         return f'''\
-{derives()}
+{derives()}{deku_ctx}
 pub struct {self.name} {{
 {self._fields_to_rust()}
 }}'''
@@ -299,7 +330,6 @@ class RustEnum:
         self.variants: List[RustEnumVariant] = []
         self.type = type
         self.bit_length = bit_length
-        self.layer3_wrapper: Optional[Layer3Wrapper] = None
         self.name = upper_camel_case(name)
 
     def is_big_endian(self) -> bool:
@@ -328,9 +358,13 @@ class RustEnum:
         return self.name
 
     def to_rust(self) -> str:
+        deku_attrs = [
+            f'id_type = "{self.type.rust_type_name()}"',
+            f'bits = {self.bit_length}',
+        ]
         return f'''\
 {derives()}
-#[deku(id_type = "{self.type.rust_type_name()}", bits = {self.bit_length})]
+#[deku({', '.join(deku_attrs)})]
 pub enum {self.name} {{
 {self._variants_to_rust()}
 {indent(f'#[deku(id_pat = "_")] Other({self.type.rust_type_name()}),')}
@@ -362,7 +396,6 @@ class RustTypeCache:
 
     def resolve_struct(self):
         rust_struct, pyobj = self.unresolved_structs.pop()
-        print('resolving', rust_struct.name, pyobj)
         bit_padding = None
         for field in pyobj:
             bit_length = None
@@ -498,6 +531,7 @@ class RustModule:
         enums = [enum for name, enum in self.cache.enum_cache.items() if name not in emm_header_names]
         return f"""
 use deku::prelude::*;
+use deku::ctx::ByteSize;
 use serde::Serialize;
 use crate::nas::layer3::*;
 
