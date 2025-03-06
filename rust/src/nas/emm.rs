@@ -164,8 +164,6 @@ enum ProtocolDiscriminator {
 
 #[cfg(test)]
 mod tests {
-    use crate::nas::generated;
-
     use super::*;
 
     fn decode_hex(s: &str) -> Vec<u8> {
@@ -179,6 +177,6 @@ mod tests {
     fn it_works() {
         // let bytes = decode_hex("07412208391185184409309005f0700000100030023ed031d127298080211001000010810600000000830600000000000d00000300ff0003130184000a000005000010005c0a009011034f18a6f15d0103c1000000000000");
         let bytes = decode_hex("075501");
-        dbg!(parse_emm_nas(&bytes));
+        dbg!(parse_emm_nas(&bytes).unwrap());
     }
 }

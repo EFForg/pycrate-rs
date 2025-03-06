@@ -1,6 +1,6 @@
-use std::{collections::{BTreeMap, HashMap}, fs::File, io::Write, path::{Path, PathBuf}};
+use std::{collections::BTreeMap, fs::File, io::Write, path::PathBuf};
 
-use pycrate_rs::nas::emm::{parse_emm_nas, NASLTEMessage};
+use pycrate_rs::nas::emm::parse_emm_nas;
 use serde_json;
 use pcap_file::{self, pcapng::{Block, PcapNgReader}};
 use clap::Parser;

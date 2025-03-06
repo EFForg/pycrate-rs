@@ -28,6 +28,16 @@ class Layer3Type(StrEnum):
     Type6LVE = 'Type6LVE'
     Type6TLVE = 'Type6TLVE'
 
+    def is_sized(self) -> bool:
+        return self in [
+            Layer3Type.Type1V,
+            Layer3Type.Type1TV,
+            Layer3Type.Type4LV,
+            Layer3Type.Type4TLV,
+            Layer3Type.Type6LVE,
+            Layer3Type.Type6TLVE,
+        ]
+
     def is_tagged(self) -> bool:
         return self in [
             Layer3Type.Type1TV,
@@ -179,6 +189,8 @@ class RustStructField:
                 assert self.bit_length % 8 == 0
                 byte_length = int(self.bit_length / 8)
                 deku_attrs.append(f'count = "{byte_length}"')
+            elif self.bit_length % 8 == 0:
+                deku_attrs.append(f'bytes = {int(self.bit_length / 8)}')
             else:
                 deku_attrs.append(f'bits = {self.bit_length}')
         if self.bit_padding is not None:
@@ -412,6 +424,7 @@ class RustModule:
             # prepare the layer 3 TLV's inner value
             if item._IE_stat is not None:
                 inner = item._IE_stat
+                bit_length = None if layer3_wrapper.type.is_sized() else inner.get_bl()
                 # check for unsupported types (these will be NoneType)
                 if isinstance(inner, (
                     elt.Sequence,
@@ -423,7 +436,7 @@ class RustModule:
                         item._name,
                         None,
                         layer3_wrapper,
-                        None,
+                        bit_length,
                         bit_padding,
                     )
                     self.base_struct.add_field(field)
@@ -434,7 +447,7 @@ class RustModule:
                         item._name,
                         RustPrimitiveType.from_pycrate(inner),
                         layer3_wrapper,
-                        None,
+                        bit_length,
                         bit_padding
                     )
                     self.base_struct.add_field(field)
@@ -444,19 +457,20 @@ class RustModule:
                     item._name,
                     field_struct,
                     layer3_wrapper,
-                    None,
+                    bit_length,
                     bit_padding,
                 )
                 self.base_struct.add_field(field)
             else:
                 inner = item._V
+                bit_length = None if layer3_wrapper.type.is_sized() else inner.get_bl()
                 if inner._dic is not None:
                     field_enum = self.cache.get_rust_enum(inner, item._name)
                     field = RustStructField(
                         item._name,
                         field_enum,
                         layer3_wrapper,
-                        None,
+                        bit_length,
                         bit_padding,
                     )
                     self.base_struct.add_field(field)
@@ -465,7 +479,7 @@ class RustModule:
                         item._name,
                         None,
                         layer3_wrapper,
-                        None,
+                        bit_length,
                         bit_padding,
                     )
                     self.base_struct.add_field(field)

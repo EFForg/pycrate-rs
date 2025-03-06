@@ -29,7 +29,10 @@ pub enum Type1TV<T> {
 }
 
 impl<'a, T> DekuReader<'a, Tag> for Type1TV<T> where T: DekuReader<'a> {
-    fn from_reader_with_ctx<R: Read+Seek>(reader: &mut Reader<R>, tag: Tag) -> Result<Self, DekuError> where Self:Sized {
+    fn from_reader_with_ctx<R: Read+Seek>(
+        reader: &mut Reader<R>,
+        tag: Tag
+    ) -> Result<Self, DekuError> {
         if reader.end() {
             return Ok(Self::None);
         }
@@ -54,17 +57,21 @@ pub struct Type1V<T> {
     pub inner: T,
 }
 
-impl<'a, T, Ctx> DekuReader<'a, Ctx> for Type1V<T> where T: DekuReader<'a, Ctx> {
-    fn from_reader_with_ctx<R: Read+Seek>(reader: &mut Reader<R>, ctx: Ctx) -> Result<Self, DekuError> where Self:Sized {
+impl<'a, T> DekuReader<'a> for Type1V<T> where T: DekuReader<'a> {
+    fn from_reader_with_ctx<R: Read+Seek>(
+        reader: &mut Reader<R>,
+        _: ()
+    ) -> Result<Self, DekuError> {
         let v = u8::from_reader_with_ctx(reader, BitSize(4))?;
         let mut cursor = Cursor::new([v]);
         let mut inner_reader = Reader::new(&mut cursor);
         inner_reader.skip_bits(4)?;
-        let inner = T::from_reader_with_ctx(&mut inner_reader, ctx)?;
+        let inner = T::from_reader_with_ctx(&mut inner_reader, ())?;
         Ok(Type1V { v, inner })
     }
 }
 
+// maybe unused?
 #[derive(Serialize, DekuRead, DekuWrite, Debug, Clone)]
 pub struct Type2<T> {
     pub tag: u8,
@@ -76,9 +83,15 @@ pub struct Type3V<T> {
     pub inner: T,
 }
 
-impl<'a, T, Ctx> DekuReader<'a, Ctx> for Type3V<T> where T: DekuReader<'a, Ctx> {
-    fn from_reader_with_ctx<R: Read+Seek>(reader: &mut Reader<R>, ctx: Ctx) -> Result<Self, DekuError> where Self:Sized {
-        let inner = T::from_reader_with_ctx(reader, ctx)?;
+impl<'a, T> DekuReader<'a, ByteSize> for Type3V<T> where T: DekuReader<'a> {
+    fn from_reader_with_ctx<R: Read+Seek>(
+        reader: &mut Reader<R>,
+        ByteSize(byte_size): ByteSize
+    ) -> Result<Self, DekuError> {
+        let buf = read_bytes_from_reader(reader, byte_size)?;
+        let mut cursor = Cursor::new(buf);
+        let mut inner_reader = Reader::new(&mut cursor);
+        let inner = T::from_reader_with_ctx(&mut inner_reader, ())?;
         Ok(Type3V { inner })
     }
 }
@@ -92,13 +105,18 @@ pub enum Type3TV<T> {
     },
 }
 
-impl<'a, T> DekuReader<'a, Tag> for Type3TV<T> where T: DekuReader<'a> + Debug {
-    fn from_reader_with_ctx<R: Read+Seek>(reader: &mut Reader<R>, tag: Tag) -> Result<Self, DekuError> where Self:Sized {
+impl<'a, T> DekuReader<'a, (ByteSize, Tag)> for Type3TV<T> where T: DekuReader<'a> + Debug {
+    fn from_reader_with_ctx<R: Read+Seek>(
+        reader: &mut Reader<R>,
+        (ByteSize(byte_size), tag): (ByteSize, Tag)
+    ) -> Result<Self, DekuError> {
         if !check_tag(reader, BitSize(8), tag)? {
             return Ok(Self::None);
         }
-        let inner = T::from_reader_with_ctx(reader, ())?;
-        dbg!(&inner);
+        let buf = read_bytes_from_reader(reader, byte_size)?;
+        let mut cursor = Cursor::new(buf);
+        let mut inner_reader = Reader::new(&mut cursor);
+        let inner = T::from_reader_with_ctx(&mut inner_reader, ())?;
         Ok(Self::Some { tag: tag.into(), inner })
     }
 }
@@ -109,14 +127,16 @@ pub struct Type4LV<T> {
     pub inner: T,
 }
 
-impl<'a, T, Ctx> DekuReader<'a, Ctx> for Type4LV<T> where T: DekuReader<'a, Ctx> + std::fmt::Debug {
-    fn from_reader_with_ctx<R: Read+Seek>(reader: &mut Reader<R>, ctx: Ctx) -> Result<Self, DekuError> where Self:Sized {
+impl<'a, T> DekuReader<'a> for Type4LV<T> where T: DekuReader<'a> + std::fmt::Debug {
+    fn from_reader_with_ctx<R: Read+Seek>(
+        reader: &mut Reader<R>,
+        _: ()
+    ) -> Result<Self, DekuError> {
         let length = u8::from_reader_with_ctx(reader, ())?;
-        dbg!(length);
         let buf = read_bytes_from_reader(reader, length as usize)?;
         let mut cursor = Cursor::new(buf);
         let mut inner_reader = Reader::new(&mut cursor);
-        let inner = T::from_reader_with_ctx(&mut inner_reader, ctx)?;
+        let inner = T::from_reader_with_ctx(&mut inner_reader, ())?;
         Ok(Self { length, inner })
     }
 }
@@ -179,7 +199,10 @@ pub enum Type4TLV<T> {
 }
 
 impl<'a> DekuReader<'a, Tag> for Type4TLV<Layer3Buffer> {
-    fn from_reader_with_ctx<R: Read+Seek>(reader: &mut Reader<R>, tag: Tag) -> Result<Self, DekuError> where Self:Sized {
+    fn from_reader_with_ctx<R: Read+Seek>(
+        reader: &mut Reader<R>,
+        tag: Tag
+    ) -> Result<Self, DekuError> {
         if !check_tag(reader, BitSize(8), tag)? {
             return Ok(Self::None);
         }
@@ -193,7 +216,10 @@ impl<'a> DekuReader<'a, Tag> for Type4TLV<Layer3Buffer> {
 }
 
 impl<'a, T> DekuReader<'a, Tag> for Type4TLV<T> where T: DekuReader<'a> {
-    fn from_reader_with_ctx<R: Read+Seek>(reader: &mut Reader<R>, tag: Tag) -> Result<Self, DekuError> where Self:Sized {
+    fn from_reader_with_ctx<R: Read+Seek>(
+        reader: &mut Reader<R>,
+        tag: Tag
+    ) -> Result<Self, DekuError> {
         if !check_tag(reader, BitSize(8), tag)? {
             return Ok(Self::None);
         }
@@ -207,7 +233,10 @@ impl<'a, T> DekuReader<'a, Tag> for Type4TLV<T> where T: DekuReader<'a> {
 }
 
 impl<'a, T> DekuReader<'a, (Endian, Tag)> for Type4TLV<T> where T: DekuReader<'a, Endian> {
-    fn from_reader_with_ctx<R: Read+Seek>(reader: &mut Reader<R>, (endian, tag): (Endian, Tag)) -> Result<Self, DekuError> where Self:Sized {
+    fn from_reader_with_ctx<R: Read+Seek>(
+        reader: &mut Reader<R>,
+        (endian, tag): (Endian, Tag)
+    ) -> Result<Self, DekuError> {
         if !check_tag(reader, BitSize(8), tag)? {
             return Ok(Self::None);
         }
@@ -226,13 +255,16 @@ pub struct Type6LVE<T> {
     pub inner: T,
 }
 
-impl<'a, T, Ctx> DekuReader<'a, Ctx> for Type6LVE<T> where T: DekuReader<'a, Ctx> {
-    fn from_reader_with_ctx<R: Read+Seek>(reader: &mut Reader<R>, ctx: Ctx) -> Result<Self, DekuError> where Self:Sized {
+impl<'a, T> DekuReader<'a> for Type6LVE<T> where T: DekuReader<'a> {
+    fn from_reader_with_ctx<R: Read+Seek>(
+        reader: &mut Reader<R>,
+        _: ()
+    ) -> Result<Self, DekuError> {
         let length = u16::from_reader_with_ctx(reader, Endian::Big)?;
         let buf = read_bytes_from_reader(reader, length as usize)?;
         let mut cursor = Cursor::new(buf);
         let mut inner_reader = Reader::new(&mut cursor);
-        let inner = T::from_reader_with_ctx(&mut inner_reader, ctx)?;
+        let inner = T::from_reader_with_ctx(&mut inner_reader, ())?;
         Ok(Self { length, inner })
     }
 }
@@ -248,7 +280,10 @@ pub enum Type6TLVE<T> {
 }
 
 impl<'a, T> DekuReader<'a, Tag> for Type6TLVE<T> where T: DekuReader<'a> {
-    fn from_reader_with_ctx<R: Read+Seek>(reader: &mut Reader<R>, tag: Tag) -> Result<Self, DekuError> where Self:Sized {
+    fn from_reader_with_ctx<R: Read+Seek>(
+        reader: &mut Reader<R>,
+        tag: Tag
+    ) -> Result<Self, DekuError> {
         if !check_tag(reader, BitSize(8), tag)? {
             return Ok(Self::None);
         }
