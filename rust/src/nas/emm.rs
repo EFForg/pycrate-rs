@@ -1,13 +1,13 @@
 use deku::prelude::*;
 use serde::Serialize;
+use std::io::{Read, Seek};
 
 use super::generated::*;
 
 #[derive(DekuRead, DekuWrite, Debug)]
-struct EMMHeader {
+pub struct NASHeader {
     pub sec_hdr: SecHdrType,
     pub protocol_discriminator: ProtocolDiscriminator,
-    pub emm_type: EMMType,
 }
 
 #[derive(DekuRead, DekuWrite, Debug)]
@@ -100,49 +100,46 @@ pub enum NASLTEMessage {
     EMMULGenericNASTransport(emmulgenericnastransport::EMMULGenericNASTransport)
 }
 
-pub fn parse_emm_nas(bytes: &[u8]) -> Result<NASLTEMessage, DekuError> {
-    let mut cursor = std::io::Cursor::new(bytes);
-    let mut reader = Reader::new(&mut cursor);
-    let header = EMMHeader::from_reader_with_ctx(&mut reader, ())?;
-    Ok(match header.emm_type {
-        EMMType::AttachRequest => NASLTEMessage::EMMAttachRequest(emmattachrequest::EMMAttachRequest::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::AttachAccept => NASLTEMessage::EMMAttachAccept(emmattachaccept::EMMAttachAccept::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::AttachComplete => NASLTEMessage::EMMAttachComplete(emmattachcomplete::EMMAttachComplete::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::AttachReject => NASLTEMessage::EMMAttachReject(emmattachreject::EMMAttachReject::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::DetachRequest => NASLTEMessage::EMMDetachRequestMO(emmdetachrequestmo::EMMDetachRequestMO::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::DetachAccept => NASLTEMessage::EMMDetachAccept(emmdetachaccept::EMMDetachAccept::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::TrackingAreaUpdateRequest => NASLTEMessage::EMMTrackingAreaUpdateRequest(emmtrackingareaupdaterequest::EMMTrackingAreaUpdateRequest::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::TrackingAreaUpdateAccept => NASLTEMessage::EMMTrackingAreaUpdateAccept(emmtrackingareaupdateaccept::EMMTrackingAreaUpdateAccept::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::TrackingAreaUpdateComplete => NASLTEMessage::EMMTrackingAreaUpdateComplete(emmtrackingareaupdatecomplete::EMMTrackingAreaUpdateComplete::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::TrackingAreaUpdateReject => NASLTEMessage::EMMTrackingAreaUpdateReject(emmtrackingareaupdatereject::EMMTrackingAreaUpdateReject::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::ExtendedServiceRequest => NASLTEMessage::EMMExtServiceRequest(emmextservicerequest::EMMExtServiceRequest::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::ControlPlaneServiceRequest => NASLTEMessage::EMMCPServiceRequest(emmcpservicerequest::EMMCPServiceRequest::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::ServiceReject => NASLTEMessage::EMMServiceReject(emmservicereject::EMMServiceReject::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::ServiceAccept => NASLTEMessage::EMMServiceAccept(emmserviceaccept::EMMServiceAccept::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::GUTIReallocationCommand => NASLTEMessage::EMMGUTIReallocCommand(emmgutirealloccommand::EMMGUTIReallocCommand::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::GUTIReallocationComplete => NASLTEMessage::EMMGUTIReallocComplete(emmgutirealloccomplete::EMMGUTIReallocComplete::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::AuthenticationRequest => NASLTEMessage::EMMAuthenticationRequest(emmauthenticationrequest::EMMAuthenticationRequest::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::AuthenticationResponse => NASLTEMessage::EMMAuthenticationResponse(emmauthenticationresponse::EMMAuthenticationResponse::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::AuthenticationReject => NASLTEMessage::EMMAuthenticationReject(emmauthenticationreject::EMMAuthenticationReject::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::AuthenticationFailure => NASLTEMessage::EMMAuthenticationFailure(emmauthenticationfailure::EMMAuthenticationFailure::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::IdentityRequest => NASLTEMessage::EMMIdentityRequest(emmidentityrequest::EMMIdentityRequest::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::IdentityResponse => NASLTEMessage::EMMIdentityResponse(emmidentityresponse::EMMIdentityResponse::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::SecurityModeCommand => NASLTEMessage::EMMSecurityModeCommand(emmsecuritymodecommand::EMMSecurityModeCommand::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::SecurityModeComplete => NASLTEMessage::EMMSecurityModeComplete(emmsecuritymodecomplete::EMMSecurityModeComplete::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::SecurityModeReject => NASLTEMessage::EMMSecurityModeReject(emmsecuritymodereject::EMMSecurityModeReject::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::EMMStatus => NASLTEMessage::EMMStatus(emmstatus::EMMStatus::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::EMMInformation => NASLTEMessage::EMMInformation(emminformation::EMMInformation::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::DownlinkNASTransport => NASLTEMessage::EMMDLNASTransport(emmdlnastransport::EMMDLNASTransport::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::UplinkNASTransport => NASLTEMessage::EMMULNASTransport(emmulnastransport::EMMULNASTransport::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::CSServiceNotification => NASLTEMessage::EMMCSServiceNotification(emmcsservicenotification::EMMCSServiceNotification::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::DownlinkGenericNASTransport => NASLTEMessage::EMMDLGenericNASTransport(emmdlgenericnastransport::EMMDLGenericNASTransport::from_reader_with_ctx(&mut reader, ())?),
-        EMMType::UplinkGenericNASTransport => NASLTEMessage::EMMULGenericNASTransport(emmulgenericnastransport::EMMULGenericNASTransport::from_reader_with_ctx(&mut reader, ())?),
+pub fn parse_emm_nas<R: Read+Seek>(emm_type: EMMType, reader: &mut Reader<R>) -> Result<NASLTEMessage, DekuError> {
+    Ok(match emm_type {
+        EMMType::AttachRequest => NASLTEMessage::EMMAttachRequest(emmattachrequest::EMMAttachRequest::from_reader_with_ctx(reader, ())?),
+        EMMType::AttachAccept => NASLTEMessage::EMMAttachAccept(emmattachaccept::EMMAttachAccept::from_reader_with_ctx(reader, ())?),
+        EMMType::AttachComplete => NASLTEMessage::EMMAttachComplete(emmattachcomplete::EMMAttachComplete::from_reader_with_ctx(reader, ())?),
+        EMMType::AttachReject => NASLTEMessage::EMMAttachReject(emmattachreject::EMMAttachReject::from_reader_with_ctx(reader, ())?),
+        EMMType::DetachRequest => NASLTEMessage::EMMDetachRequestMO(emmdetachrequestmo::EMMDetachRequestMO::from_reader_with_ctx(reader, ())?),
+        EMMType::DetachAccept => NASLTEMessage::EMMDetachAccept(emmdetachaccept::EMMDetachAccept::from_reader_with_ctx(reader, ())?),
+        EMMType::TrackingAreaUpdateRequest => NASLTEMessage::EMMTrackingAreaUpdateRequest(emmtrackingareaupdaterequest::EMMTrackingAreaUpdateRequest::from_reader_with_ctx(reader, ())?),
+        EMMType::TrackingAreaUpdateAccept => NASLTEMessage::EMMTrackingAreaUpdateAccept(emmtrackingareaupdateaccept::EMMTrackingAreaUpdateAccept::from_reader_with_ctx(reader, ())?),
+        EMMType::TrackingAreaUpdateComplete => NASLTEMessage::EMMTrackingAreaUpdateComplete(emmtrackingareaupdatecomplete::EMMTrackingAreaUpdateComplete::from_reader_with_ctx(reader, ())?),
+        EMMType::TrackingAreaUpdateReject => NASLTEMessage::EMMTrackingAreaUpdateReject(emmtrackingareaupdatereject::EMMTrackingAreaUpdateReject::from_reader_with_ctx(reader, ())?),
+        EMMType::ExtendedServiceRequest => NASLTEMessage::EMMExtServiceRequest(emmextservicerequest::EMMExtServiceRequest::from_reader_with_ctx(reader, ())?),
+        EMMType::ControlPlaneServiceRequest => NASLTEMessage::EMMCPServiceRequest(emmcpservicerequest::EMMCPServiceRequest::from_reader_with_ctx(reader, ())?),
+        EMMType::ServiceReject => NASLTEMessage::EMMServiceReject(emmservicereject::EMMServiceReject::from_reader_with_ctx(reader, ())?),
+        EMMType::ServiceAccept => NASLTEMessage::EMMServiceAccept(emmserviceaccept::EMMServiceAccept::from_reader_with_ctx(reader, ())?),
+        EMMType::GUTIReallocationCommand => NASLTEMessage::EMMGUTIReallocCommand(emmgutirealloccommand::EMMGUTIReallocCommand::from_reader_with_ctx(reader, ())?),
+        EMMType::GUTIReallocationComplete => NASLTEMessage::EMMGUTIReallocComplete(emmgutirealloccomplete::EMMGUTIReallocComplete::from_reader_with_ctx(reader, ())?),
+        EMMType::AuthenticationRequest => NASLTEMessage::EMMAuthenticationRequest(emmauthenticationrequest::EMMAuthenticationRequest::from_reader_with_ctx(reader, ())?),
+        EMMType::AuthenticationResponse => NASLTEMessage::EMMAuthenticationResponse(emmauthenticationresponse::EMMAuthenticationResponse::from_reader_with_ctx(reader, ())?),
+        EMMType::AuthenticationReject => NASLTEMessage::EMMAuthenticationReject(emmauthenticationreject::EMMAuthenticationReject::from_reader_with_ctx(reader, ())?),
+        EMMType::AuthenticationFailure => NASLTEMessage::EMMAuthenticationFailure(emmauthenticationfailure::EMMAuthenticationFailure::from_reader_with_ctx(reader, ())?),
+        EMMType::IdentityRequest => NASLTEMessage::EMMIdentityRequest(emmidentityrequest::EMMIdentityRequest::from_reader_with_ctx(reader, ())?),
+        EMMType::IdentityResponse => NASLTEMessage::EMMIdentityResponse(emmidentityresponse::EMMIdentityResponse::from_reader_with_ctx(reader, ())?),
+        EMMType::SecurityModeCommand => NASLTEMessage::EMMSecurityModeCommand(emmsecuritymodecommand::EMMSecurityModeCommand::from_reader_with_ctx(reader, ())?),
+        EMMType::SecurityModeComplete => NASLTEMessage::EMMSecurityModeComplete(emmsecuritymodecomplete::EMMSecurityModeComplete::from_reader_with_ctx(reader, ())?),
+        EMMType::SecurityModeReject => NASLTEMessage::EMMSecurityModeReject(emmsecuritymodereject::EMMSecurityModeReject::from_reader_with_ctx(reader, ())?),
+        EMMType::EMMStatus => NASLTEMessage::EMMStatus(emmstatus::EMMStatus::from_reader_with_ctx(reader, ())?),
+        EMMType::EMMInformation => NASLTEMessage::EMMInformation(emminformation::EMMInformation::from_reader_with_ctx(reader, ())?),
+        EMMType::DownlinkNASTransport => NASLTEMessage::EMMDLNASTransport(emmdlnastransport::EMMDLNASTransport::from_reader_with_ctx(reader, ())?),
+        EMMType::UplinkNASTransport => NASLTEMessage::EMMULNASTransport(emmulnastransport::EMMULNASTransport::from_reader_with_ctx(reader, ())?),
+        EMMType::CSServiceNotification => NASLTEMessage::EMMCSServiceNotification(emmcsservicenotification::EMMCSServiceNotification::from_reader_with_ctx(reader, ())?),
+        EMMType::DownlinkGenericNASTransport => NASLTEMessage::EMMDLGenericNASTransport(emmdlgenericnastransport::EMMDLGenericNASTransport::from_reader_with_ctx(reader, ())?),
+        EMMType::UplinkGenericNASTransport => NASLTEMessage::EMMULGenericNASTransport(emmulgenericnastransport::EMMULGenericNASTransport::from_reader_with_ctx(reader, ())?),
     })
 }
 
 #[derive(DekuRead, DekuWrite, Debug)]
 #[deku(id_type = "u8", bits = 4)]
-enum ProtocolDiscriminator {
+pub enum ProtocolDiscriminator {
     #[deku(id = 0)] GCC,
     #[deku(id = 1)] BCC,
     #[deku(id = 2)] ESM,
@@ -171,12 +168,5 @@ mod tests {
             .step_by(2)
             .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
             .collect()
-    }
-
-    #[test]
-    fn it_works() {
-        // let bytes = decode_hex("07412208391185184409309005f0700000100030023ed031d127298080211001000010810600000000830600000000000d00000300ff0003130184000a000005000010005c0a009011034f18a6f15d0103c1000000000000");
-        let bytes = decode_hex("075501");
-        dbg!(parse_emm_nas(&bytes).unwrap());
     }
 }

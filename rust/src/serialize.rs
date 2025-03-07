@@ -1,6 +1,7 @@
 use std::{collections::BTreeMap, fs::File, io::Write, path::PathBuf};
 
-use pycrate_rs::nas::emm::parse_emm_nas;
+use deku::prelude::*;
+use pycrate_rs::nas::emm::{parse_emm_nas, EMMType, NASHeader, NASLTEMessage, ProtocolDiscriminator};
 use serde_json;
 use pcap_file::{self, pcapng::{Block, PcapNgReader}};
 use clap::Parser;
@@ -30,6 +31,20 @@ const GSMTAP_HDR_START: usize = 28;
 const GSMTAP_HDR_END: usize = GSMTAP_HDR_START + 16;
 const GSMTAP_TYPE_NAS: u8 = 18;
 
+fn process_packet(data: &[u8]) -> Result<NASLTEMessage, String> {
+    let mut cursor = std::io::Cursor::new(data);
+    let mut reader = Reader::new(&mut cursor);
+    let header = NASHeader::from_reader_with_ctx(&mut reader, ())
+        .map_err(|err| format!("failed to parse header: {}", err))?;
+    if !matches!(header.protocol_discriminator, ProtocolDiscriminator::EMM) {
+        return Err(format!("unsupported protocol type {:?}", header.protocol_discriminator));
+    }
+    let emm_type = EMMType::from_reader_with_ctx(&mut reader, ())
+        .map_err(|err| format!("Failed to parse EMM type: {}", err))?;
+    parse_emm_nas(emm_type, &mut reader)
+        .map_err(|err| format!("failed to parse EMM packet: {}", err))
+}
+
 fn process_pcap(mut pcap_file: PcapNgReader<File>, output_file: &mut File) -> std::io::Result<()> {
     let mut msgs = BTreeMap::new();
     let mut i = -1;
@@ -45,8 +60,7 @@ fn process_pcap(mut pcap_file: PcapNgReader<File>, output_file: &mut File) -> st
         let gsmtap_type = gsmtap_hdr[2];
         let packet_data = &data[GSMTAP_HDR_END..];
         if gsmtap_type == GSMTAP_TYPE_NAS {
-            // println!("{:#02x?}", packet_data);
-            match parse_emm_nas(packet_data) {
+            match process_packet(packet_data) {
                 Ok(packet) => { msgs.insert(i, Ok(packet)); },
                 Err(err) => { msgs.insert(i, Err(format!("err on packet {}: {}", i, err))); },
             }
