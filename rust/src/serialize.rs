@@ -1,7 +1,6 @@
 use std::{collections::BTreeMap, fs::File, io::Write, path::PathBuf};
 
-use deku::prelude::*;
-use pycrate_rs::nas::NASMessage;
+use pycrate_rs::nas::{NASMessage, ParseError};
 use serde_json;
 use pcap_file::{self, pcapng::{Block, PcapNgReader}};
 use clap::Parser;
@@ -48,6 +47,7 @@ fn process_pcap(mut pcap_file: PcapNgReader<File>, output_file: &mut File) -> st
         if gsmtap_type == GSMTAP_TYPE_NAS {
             match NASMessage::parse(packet_data) {
                 Ok(packet) => { msgs.insert(i, Ok(packet)); },
+                Err(ParseError::EncryptedNASMessage) => { msgs.insert(i, Err("(encrypted NAS message)".to_string())); },
                 Err(err) => { msgs.insert(i, Err(format!("err on packet {}: {}", i, err))); },
             }
         }

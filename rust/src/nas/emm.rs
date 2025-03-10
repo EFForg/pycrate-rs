@@ -89,14 +89,22 @@ pub fn parse_emm_nas<R: Read+Seek>(emm_type: EMMType, mut reader: Reader<R>) -> 
         EMMType::AttachAccept => EMMMessage::EMMAttachAccept(emmattachaccept::EMMAttachAccept::from_reader_with_ctx(&mut reader, ())?),
         EMMType::AttachComplete => EMMMessage::EMMAttachComplete(emmattachcomplete::EMMAttachComplete::from_reader_with_ctx(&mut reader, ())?),
         EMMType::AttachReject => EMMMessage::EMMAttachReject(emmattachreject::EMMAttachReject::from_reader_with_ctx(&mut reader, ())?),
+        // DetachRequests are overloaded depending on whether the message is MO
+        // (mobile originated) or MT (mobile terminated). Simply try both, and
+        // return whichever one successfully parses
         EMMType::DetachRequest => {
+            // save a bookmark to the beginning of the message in case we need
+            // to retry
             let cursor = reader.into_inner();
             let bookmark = cursor.seek(SeekFrom::Current(0))
                 .map_err(|err| DekuError::Io(err.kind()))?;
             let mut reader = Reader::new(cursor);
+
+            // attempt an MO parse
             if let Ok(mo_result) = emmdetachrequestmo::EMMDetachRequestMO::from_reader_with_ctx(&mut reader, ()) {
                 EMMMessage::EMMDetachRequestMO(mo_result)
             } else {
+                // rewind, then attempt an MT parse
                 let cursor = reader.into_inner();
                 cursor.seek(SeekFrom::Start(bookmark))
                     .map_err(|err| DekuError::Io(err.kind()))?;
@@ -132,16 +140,4 @@ pub fn parse_emm_nas<R: Read+Seek>(emm_type: EMMType, mut reader: Reader<R>) -> 
         EMMType::DownlinkGenericNASTransport => EMMMessage::EMMDLGenericNASTransport(emmdlgenericnastransport::EMMDLGenericNASTransport::from_reader_with_ctx(&mut reader, ())?),
         EMMType::UplinkGenericNASTransport => EMMMessage::EMMULGenericNASTransport(emmulgenericnastransport::EMMULGenericNASTransport::from_reader_with_ctx(&mut reader, ())?),
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn decode_hex(s: &str) -> Vec<u8> {
-        (0..s.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
-            .collect()
-    }
 }

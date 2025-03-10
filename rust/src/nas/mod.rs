@@ -2,7 +2,8 @@ use deku::prelude::*;
 use deku::ctx::BitSize;
 use emm::{parse_emm_nas, EMMType};
 use esm::{parse_esm_nas, ESMType};
-use std::{borrow::Cow, io::{Read, Seek, Cursor}};
+use std::io::Cursor;
+use thiserror::Error;
 use serde::Serialize;
 
 pub mod layer3;
@@ -11,6 +12,16 @@ pub mod esm;
 
 pub mod generated;
 
+#[derive(Debug, Error)]
+pub enum ParseError {
+    #[error("Cannot decode encrypted NAS messages")]
+    EncryptedNASMessage,
+    #[error("Unsupported NAS protocol {0:?}")]
+    UnsupportedNASProtocol(ProtocolDiscriminator),
+    #[error("Failed to parse message")]
+    Deku(#[from] DekuError),
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub enum NASMessage {
     EMMMessage(emm::EMMMessage),
@@ -18,15 +29,14 @@ pub enum NASMessage {
 }
 
 impl NASMessage {
-    pub fn parse(data: &[u8]) -> Result<Self, DekuError> {
+    pub fn parse(data: &[u8]) -> Result<Self, ParseError> {
         let mut cursor = Cursor::new(data);
         let mut reader = Reader::new(&mut cursor);
         let sec_hdr_or_bearer_id = u8::from_reader_with_ctx(&mut reader, BitSize(4))?;
         match ProtocolDiscriminator::from_reader_with_ctx(&mut reader, ())? {
             ProtocolDiscriminator::EMM => {
                 if sec_hdr_or_bearer_id != SecHdrType::NoSecurity.deku_id()? {
-                    let err_str = Cow::Owned(format!("NAS EMM messages must not be encrypted"));
-                    return Err(DekuError::Assertion(err_str));
+                    return Err(ParseError::EncryptedNASMessage);
                 }
                 let emm_type = EMMType::from_reader_with_ctx(&mut reader, ())?;
                 Ok(NASMessage::EMMMessage(parse_emm_nas(emm_type, reader)?))
@@ -36,10 +46,7 @@ impl NASMessage {
                 let esm_type = ESMType::from_reader_with_ctx(&mut reader, ())?;
                 Ok(NASMessage::ESMMessage(parse_esm_nas(esm_type, reader)?))
             }
-            p => {
-                let err_str = Cow::Owned(format!("unsupported NAS protocol {:?}", p));
-                Err(DekuError::Assertion(err_str))
-            },
+            p => Err(ParseError::UnsupportedNASProtocol(p)),
         }
     }
 }
