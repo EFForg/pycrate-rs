@@ -9,6 +9,7 @@ from pycrate_mobile.TS24301_EMM import EMMHeader
 from pycrate_mobile.TS24301_ESM import ESMHeader
 from enum import StrEnum, IntEnum, auto
 from pycrate_mobile.TS24301_IE import LCSClientId
+from namer import Name
 import inflect
 import re
 
@@ -75,47 +76,11 @@ def get_layer3_wrapper(obj: elt.Envelope) -> Optional[Layer3Wrapper]:
 
 
 def upper_camel_case(s: str) -> str:
-    s = sanitize(s)
-    s = s.replace('_', '')
-    if s[0].islower():
-        return s.title()
-    else:
-        return s
+    return Name(s).cc()
 
 
 def snake_case(s: str) -> str:
-    s = sanitize(s)
-    snake_cased = s.replace(' ', '_').lower()
-    if snake_cased in RESERVED_WORDS:
-        snake_cased = snake_cased[:-1]
-    return snake_cased
-
-
-inflect_engine = inflect.engine()
-def sanitize(s: str) -> str:
-    starts_with_number = re.compile('^[0-9]+').search(s)
-    if starts_with_number:
-        match = starts_with_number[0]
-        number_word = inflect_engine.number_to_words(int(match))
-        number_word = number_word.replace('-', '')
-        s = s.replace(match, number_word)
-    s = replace_forbidden_character(s)
-    return s
-
-
-def replace_forbidden_character(s: str) -> str:
-    s = s.replace('+', 'Plus')
-    s = s.replace('-', 'Minus')
-    s = s.replace('(', '')
-    s = s.replace(')', '')
-    s = s.replace('/', '')
-    s = s.replace(',', '')
-    s = s.replace(';', '')
-    s = s.replace('.', '')
-    s = s.replace('"', '')
-    s = s.replace(' ', '')
-    s = s.replace('=', 'Equals')
-    return s
+    return Name(s).sc()
 
 
 def derives() -> str:
