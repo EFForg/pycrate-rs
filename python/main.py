@@ -6,6 +6,7 @@ from pycrate_csn1.csnobj import CSN1List
 from pycrate_mobile import NASLTE
 from pycrate_mobile.TS24007 import IE, Layer3E
 from pycrate_mobile.TS24301_EMM import EMMHeader
+from pycrate_mobile.TS24301_ESM import ESMHeader
 from enum import StrEnum, IntEnum, auto
 from pycrate_mobile.TS24301_IE import LCSClientId
 import inflect
@@ -211,6 +212,9 @@ class RustStructField:
             deku_attrs.append('endian = "big"')
         if self.is_optional:
             deku_attrs.append('cond = "deku::byte_offset < byte_size"')
+            if isinstance(self.type, RustEnum):
+                default_name = f"{self.type.name}::{self.type.variants[0].name}"
+                deku_attrs.append(f'default = "{default_name}"')
         ctx = []
         is_layer3_buffer = False
         if self.layer3_wrapper is not None:
@@ -252,7 +256,11 @@ class RustStruct:
         # Some of these structs are variable-sized bitfields which whose fields
         # should be optionally parsed based on the byte-size of the entire
         # struct
-        self.is_variable_bitfield = self.name.endswith('Cap')
+        self.is_variable_bitfield = any([
+            self.name.endswith('Cap'),
+            self.name == 'EPSNetFeat',
+            self.name == 'APNAMBR',
+        ])
 
     @staticmethod
     def from_pycrate(
@@ -443,7 +451,7 @@ class RustModule:
         bit_padding = None
 
         # skip the EMMHeader
-        assert isinstance(self.pyobj._GEN[0], EMMHeader)
+        assert isinstance(self.pyobj._GEN[0], (EMMHeader, ESMHeader))
         for item in self.pyobj._GEN[1:]:
             layer3_wrapper = get_layer3_wrapper(item)
 
@@ -522,13 +530,24 @@ class RustModule:
             self.cache.resolve_struct()
 
     def to_rust(self) -> str:
+        excluded_structs = [
+            'EMMHeader',
+            'ESMHeader',
+        ]
         emm_header_names = [
             'EMMHeaderProtDisc',
             'EMMHeaderSecHdr',
             'EMMHeaderType',
         ]
-        structs = [struct for name, struct in self.cache.struct_cache.items() if name != 'EMMHeader']
-        enums = [enum for name, enum in self.cache.enum_cache.items() if name not in emm_header_names]
+        esm_header_names = [
+            'ESMHeaderESPBearerId',
+            'ESMHeaderProtDisc'
+            'ESMHeaderPTI',
+            'ESMHeaderType',
+        ]
+        excluded_enums = emm_header_names + esm_header_names
+        structs = [struct for name, struct in self.cache.struct_cache.items() if name not in excluded_structs]
+        enums = [enum for name, enum in self.cache.enum_cache.items() if name not in excluded_enums]
         return f"""
 use deku::prelude::*;
 use deku::ctx::ByteSize;
@@ -567,14 +586,21 @@ class RustModuleIndex:
                 f.write(mod.to_rust())
 
 
-def main(filepath: str):
+def generate_module(filepath: str, classes: list[Layer3E]) -> None:
     index = RustModuleIndex()
-    for i in NASLTE.EMMTypeMOClasses:
-        obj = NASLTE.EMMTypeMOClasses[i]()
+    for clazz in classes:
+        obj = clazz()
         module = RustModule(obj)
         module.resolve_types()
         index.add(module)
     index.generate_module(filepath)
+
+
+def main(filepath: str):
+    emm_classes = list(NASLTE.EMMTypeMOClasses.values())
+    emm_classes.append(NASLTE.EMMTypeMTClasses[69])  # add in the MT version of DetachRequest
+    generate_module(os.path.join(filepath, 'emm'), emm_classes)
+    generate_module(os.path.join(filepath, 'esm'), NASLTE.ESMTypeClasses.values())
 
 
 if __name__ == "__main__":
