@@ -367,6 +367,9 @@ class RustTypeCache:
         self.struct_cache[rust_struct.name] = rust_struct
         return rust_struct
 
+    # Pop an unresolved struct off the stack and for each of its fields,
+    # generate either a primitive type, enum, or struct. Other structs
+    # generated this way are pushed onto the unresolved_structs stack.
     def resolve_struct(self):
         rust_struct, pyobj = self.unresolved_structs.pop()
         bit_padding = None
@@ -396,6 +399,7 @@ class RustTypeCache:
             )
             rust_struct.add_field(field)
 
+    # Get (or create) a RustEnum for the given pycrate object
     def get_rust_enum(self, pyobj: Any, prefix: str) -> RustEnum:
         name = prefix + pyobj._name
         if name in self.enum_cache:
@@ -405,10 +409,13 @@ class RustTypeCache:
         return rust_enum
 
 
+# A rust module derived from a single pycrate class.
 class RustModule:
     def __init__(self, pyobj: Layer3E) -> None:
         self.cache = RustTypeCache()
         self.pyobj = pyobj
+        # the base struct shouldn't be considered unresolved, since we're going
+        # to resolve it separately.
         self.base_struct = self.cache.get_rust_struct(pyobj, False)
         self.name = self.base_struct.name.lower()
 
@@ -431,13 +438,14 @@ class RustModule:
             if item._IE_stat is not None:
                 inner = item._IE_stat
                 bit_length = None if layer3_wrapper.type.is_sized() else inner.get_bl()
-                # check for unsupported types (these will be NoneType)
+                # check for unsupported types
                 if isinstance(inner, (
                     elt.Sequence,
                     elt.Array,
                     CSN1List,
                     LCSClientId,
                 )):
+                    # passing None for type results in an inner type of unit, aka `()`
                     field = RustStructField(
                         item._name,
                         None,
