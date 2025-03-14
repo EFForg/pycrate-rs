@@ -87,7 +87,7 @@ class RustModule:
         # resolving it later
         self.base_struct = self.cache.get_rust_struct(self.pyobj, False)
         self.name = self.base_struct.name.lower()
-        self.test_cases = []
+        self.test_cases: list[RustTestCase] = []
 
     def resolve_types(self) -> None:
         bit_padding = None
@@ -186,7 +186,10 @@ class RustModule:
         self.test_cases.append(RustTestCase(name, input_hexstring, self.base_struct, self.pyobj))
 
     def _tests_to_rust(self) -> str:
-        if len(self.test_cases) == 0:
+        total_assertions = sum(len(c.assertions) for c in self.test_cases)
+        if total_assertions == 0:
+            if len(self.test_cases):
+                print(f'warning: {self.name} has test cases but no assertions!')
             return ''
         return f'''
 #[cfg(test)]
@@ -231,6 +234,7 @@ use crate::nas::layer3::*;
 {test_cases}
 """
 
+
 class RustModuleIndex:
     def __init__(self) -> None:
         self.modules: List[RustModule] = []
@@ -247,13 +251,11 @@ class RustModuleIndex:
 
     def generate_module(self, filepath: str) -> None:
         index_path = os.path.join(filepath, 'mod.rs')
-        print(f'writing index to {index_path}')
         with open(index_path, 'w') as f:
             f.write(self.to_rust())
 
         for mod in self.modules:
             mod_path = os.path.join(filepath, f'{mod.name}.rs')
-            print(f'writing {mod.name} to {mod_path}')
             with open(mod_path, 'w') as f:
                 f.write(mod.to_rust())
 

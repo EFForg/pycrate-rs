@@ -100,7 +100,10 @@ class RustTestCase:
                 lines.append(f'let {layer3_ident} = {ident_name}.{inner_part};')
                 unwrapped_layer3_idents.append(layer3_ident)
             field_train = '.'.join([field.name for field in fields[1:]])
-            lhs = f'{layer3_ident}.{field_train}'
+            if len(field_train):
+                lhs = f'{layer3_ident}.{field_train}'
+            else:
+                lhs = layer3_ident
             rhs = value.to_rust()
             lines.append(f'assert_eq!({lhs}, {rhs});')
         return '\n'.join(lines)
