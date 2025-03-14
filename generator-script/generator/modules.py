@@ -250,6 +250,7 @@ class RustModuleIndex:
 {module_text}"""
 
     def generate_module(self, filepath: str) -> None:
+        os.makedirs(filepath)
         index_path = os.path.join(filepath, 'mod.rs')
         with open(index_path, 'w') as f:
             f.write(self.to_rust())
