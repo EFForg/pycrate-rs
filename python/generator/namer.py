@@ -47,7 +47,7 @@ class Name:
             self.words = ['minus']
         else:
             self.words = tokenize(raw)
-    
+
     def cc(self):
         result = ''
         for word in self.words:
@@ -56,11 +56,11 @@ class Name:
             else:
                 result += word
         return self._fix_reserved_words(result)
-    
+
     def sc(self):
         result = '_'.join([word.lower() for word in self.words])
         return self._fix_reserved_words(result)
-    
+
     def _fix_reserved_words(self, input: str) -> str:
         reserved = [
             'type',
@@ -80,7 +80,7 @@ class TestNamer(unittest.TestCase):
         ue_rad = Name('UERadioCapIDDelInd')
         assert ue_rad.cc() == 'UERadioCapIDDelInd'
         assert ue_rad.sc() == 'ue_radio_cap_id_del_ind'
-    
+
     def test_spaces(self):
         sms = Name('SMS services not available in this PLMN')
         assert sms.cc() == 'SMSServicesNotAvailableInThisPLMN'
@@ -94,7 +94,7 @@ class TestNamer(unittest.TestCase):
         slashed = Name('TCP/IP')
         assert slashed.cc() == 'TCPIP'
         assert slashed.sc() == 'tcp_ip'
-    
+
     def test_leading_numbers(self):
         bitrate = Name('200 kbps')
         assert bitrate.cc() == 'TwoHundredKbps'
@@ -112,12 +112,12 @@ class TestNamer(unittest.TestCase):
         hex3 = Name('0x0006 (TCP/IP)')
         assert hex3.cc() == 'SixTCPIP'
         assert hex3.sc() == 'six_tcp_ip'
-    
+
     def test_reserved_word(self):
         type = Name('type')
         assert type.cc() == 'Type'
         assert type.sc() == 'typ'
-    
+
     def test_plus_minus(self):
         plus = Name('+')
         assert plus.cc() == 'Plus'
