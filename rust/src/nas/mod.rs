@@ -9,8 +9,9 @@ use serde::Serialize;
 pub mod layer3;
 pub mod emm;
 pub mod esm;
-
 pub mod generated;
+
+mod test_utils;
 
 #[derive(Debug, Error)]
 pub enum ParseError {

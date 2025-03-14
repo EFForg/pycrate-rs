@@ -1,5 +1,6 @@
+import binascii
 import os
-from typing import Dict, List, Optional, Tuple, Union, Any
+from typing import Dict, List, Optional, Tuple, Union, Any, Type
 from pycrate_core import elt
 from pycrate_core.base import Uint, Buf, Uint8, Uint16
 from pycrate_csn1.csnobj import CSN1List
@@ -10,8 +11,6 @@ from pycrate_mobile.TS24301_ESM import ESMHeader
 from enum import StrEnum, IntEnum, auto
 from pycrate_mobile.TS24301_IE import LCSClientId
 from namer import Name
-import inflect
-import re
 
 
 RESERVED_WORDS = [
@@ -67,6 +66,18 @@ class Layer3Wrapper:
         else:
             self.tag = None
 
+    def get_inner_idx(self) -> int:
+        return {
+            Layer3Type.Type1V: 0,
+            Layer3Type.Type1TV: 1,
+            Layer3Type.Type3V: 0,
+            Layer3Type.Type3TV: 1,
+            Layer3Type.Type4LV: 1,
+            Layer3Type.Type4TLV: 2,
+            Layer3Type.Type6LVE: 1,
+            Layer3Type.Type6TLVE: 2,
+        }[self.type]
+
 
 def get_layer3_wrapper(obj: elt.Envelope) -> Optional[Layer3Wrapper]:
     try:
@@ -83,7 +94,7 @@ def snake_case(s: str) -> str:
     return Name(s).sc()
 
 
-def derives() -> str:
+def derives(partial_eq=False) -> str:
     traits = [
         'DekuRead',
         # 'DekuWrite', # TODO: implement DekuWrite for
@@ -91,6 +102,8 @@ def derives() -> str:
         'Serialize',
         'Clone',
     ]
+    if partial_eq:
+        traits.append('PartialEq')
     return f'#[derive({', '.join(traits)})]'
 
 
@@ -101,8 +114,6 @@ class RustPrimitiveType(IntEnum):
     I16 = auto()
     U32 = auto()
     I32 = auto()
-    F32 = auto()
-    Char = auto()
     VecU8 = auto()
 
     def rust_type_name(self) -> str:
@@ -116,7 +127,6 @@ class RustPrimitiveType(IntEnum):
             RustPrimitiveType.I16,
             RustPrimitiveType.U32,
             RustPrimitiveType.I32,
-            RustPrimitiveType.F32,
         ]
 
     @staticmethod
@@ -153,7 +163,7 @@ class RustStructField:
         self.layer3_wrapper = layer3_wrapper
         self.bit_length = bit_length
         self.bit_padding = bit_padding
-        
+
         # whether this field should be conditionally parsed based on how many
         # bytes remain
         self.is_optional = False
@@ -215,7 +225,8 @@ class RustStruct:
         self,
         name: str,
     ) -> None:
-        self.fields: List[RustStructField] = []
+        self.fields: list[RustStructField] = []
+        self.pyobj_indices: list[Optional[int]] = []
         self.name = upper_camel_case(name)
 
         # Some of these structs are variable-sized bitfields which whose fields
@@ -233,10 +244,11 @@ class RustStruct:
     ) -> 'RustStruct':
         return RustStruct(obj._name)
 
-    def add_field(self, field: RustStructField) -> None:
+    def add_field(self, field: RustStructField, pyobj_index: Optional[int]) -> None:
         if self.is_variable_bitfield:
             field.is_optional = True
         self.fields.append(field)
+        self.pyobj_indices.append(pyobj_index)
 
     def _fix_all_duplicates(self) -> None:
         dupe = self._find_duplicate_field_name()
@@ -280,7 +292,8 @@ pub struct {self.name} {{
 
 def indent(s: str, num_indents=1) -> str:
     indentation = ' ' * 4 * num_indents
-    return indentation + s
+    lines = [indentation + line for line in s.split('\n')]
+    return '\n'.join(lines)
 
 
 class RustEnumVariant:
@@ -335,12 +348,17 @@ class RustEnum:
             f'id_type = "{self.type.rust_type_name()}"',
             f'bits = {self.bit_length}',
         ]
+        # FIXME: we can't support a catchall variant which stores the value
+        # until https://github.com/sharksforarms/deku/issues/533 is fixed
+        # other_type_part = f'#[deku(bits = {self.bit_length})] {self.type.rust_type_name()}'
+        # other_variant = f'#[deku(id_pat = "_")] Other({other_type_part}),'
+        other_variant = '#[deku(id_pat = "_")] Other,'
         return f'''\
-{derives()}
+{derives(partial_eq=True)}
 #[deku({', '.join(deku_attrs)})]
 pub enum {self.name} {{
 {self._variants_to_rust()}
-{indent(f'#[deku(id_pat = "_")] Other({self.type.rust_type_name()}),')}
+{indent(other_variant)}
 }}'''
 
     def _variants_to_rust(self) -> str:
@@ -354,6 +372,9 @@ class RustTypeCache:
         self.enum_cache: Dict[str, RustEnum] = {}
         self.unresolved_structs: List[Tuple[RustStruct, elt.Envelope]] = []
 
+    # Get (or create) a RustStruct for the given pycrate object. RustStructs
+    # created this way are by default pushed onto the stack of unresolved
+    # structs
     def get_rust_struct(
         self,
         pyobj: elt.Envelope,
@@ -373,31 +394,31 @@ class RustTypeCache:
     def resolve_struct(self):
         rust_struct, pyobj = self.unresolved_structs.pop()
         bit_padding = None
-        for field in pyobj:
+        for i, item in enumerate(pyobj):
             bit_length = None
-            if isinstance(field, elt.Atom):
-                if isinstance(field, Buf):
+            if isinstance(item, elt.Atom):
+                if isinstance(item, Buf):
                     rust_type = RustPrimitiveType.VecU8
-                    bit_length = field.get_bl()
-                elif field._dic:
-                    rust_enum = self.get_rust_enum(field, rust_struct.name)
-                    bit_length = field.get_bl()
+                    bit_length = item.get_bl()
+                elif item._dic:
+                    rust_enum = self.get_rust_enum(item, rust_struct.name)
+                    bit_length = item.get_bl()
                     rust_type = rust_enum
                 else:
-                    rust_type = RustPrimitiveType.from_pycrate(field)
-                    bit_length = field.get_bl()
-            elif isinstance(field, elt.Envelope):
-                rust_type = self.get_rust_struct(field)
+                    rust_type = RustPrimitiveType.from_pycrate(item)
+                    bit_length = item.get_bl()
+            elif isinstance(item, elt.Envelope):
+                rust_type = self.get_rust_struct(item)
             else:
                 rust_type = None
-            field = RustStructField(
-                field._name,
+            rust_field = RustStructField(
+                item._name,
                 rust_type,
                 None,
                 bit_length,
                 bit_padding,
             )
-            rust_struct.add_field(field)
+            rust_struct.add_field(rust_field, i)
 
     # Get (or create) a RustEnum for the given pycrate object
     def get_rust_enum(self, pyobj: Any, prefix: str) -> RustEnum:
@@ -414,17 +435,22 @@ class RustModule:
     def __init__(self, pyobj: Layer3E) -> None:
         self.cache = RustTypeCache()
         self.pyobj = pyobj
-        # the base struct shouldn't be considered unresolved, since we're going
-        # to resolve it separately.
-        self.base_struct = self.cache.get_rust_struct(pyobj, False)
+
+        # don't mark the base struct as unresolved, since we'll be manually
+        # resolving it later
+        self.base_struct = self.cache.get_rust_struct(self.pyobj, False)
         self.name = self.base_struct.name.lower()
+        self.test_cases = []
 
     def resolve_types(self) -> None:
         bit_padding = None
 
-        # skip the EMMHeader
-        assert isinstance(self.pyobj._GEN[0], (EMMHeader, ESMHeader))
-        for item in self.pyobj._GEN[1:]:
+        for i, item in enumerate(self.pyobj._content):
+            # skip the EMMHeader
+            if i == 0:
+                assert isinstance(item, (EMMHeader, ESMHeader))
+                continue
+
             layer3_wrapper = get_layer3_wrapper(item)
 
             # the only time we don't have a layer 3 TLV is bit padding
@@ -453,7 +479,7 @@ class RustModule:
                         bit_length,
                         bit_padding,
                     )
-                    self.base_struct.add_field(field)
+                    self.base_struct.add_field(field, None)
                     continue
                 # check for Buf-type IEs
                 if isinstance(inner, elt.Atom):
@@ -464,7 +490,7 @@ class RustModule:
                         bit_length,
                         bit_padding
                     )
-                    self.base_struct.add_field(field)
+                    self.base_struct.add_field(field, i)
                     continue
                 field_struct = self.cache.get_rust_struct(inner)
                 field = RustStructField(
@@ -474,7 +500,7 @@ class RustModule:
                     bit_length,
                     bit_padding,
                 )
-                self.base_struct.add_field(field)
+                self.base_struct.add_field(field, i)
             else:
                 inner = item._V
                 bit_length = None if layer3_wrapper.type.is_sized() else inner.get_bl()
@@ -487,7 +513,7 @@ class RustModule:
                         bit_length,
                         bit_padding,
                     )
-                    self.base_struct.add_field(field)
+                    self.base_struct.add_field(field, i)
                 else:
                     field = RustStructField(
                         item._name,
@@ -496,11 +522,36 @@ class RustModule:
                         bit_length,
                         bit_padding,
                     )
-                    self.base_struct.add_field(field)
+                    self.base_struct.add_field(field, None)
             bit_padding = None
 
         while len(self.cache.unresolved_structs):
             self.cache.resolve_struct()
+
+    def add_test_case(self, input_hexstring: str, input_bytes: bytes) -> None:
+        # the pycrate method from_bytes() sets all of the objects internal
+        # values according to the binary payload, and since we've associated
+        # each rust element with a corresponding pycrate element (or index into
+        # element), this lets us easily match rust values to the expected parsed
+        # pycrate value
+        self.pyobj.from_bytes(input_bytes)
+        name = f'case_{len(self.test_cases) + 1}'
+        self.test_cases.append(RustTestCase(name, input_hexstring, self.base_struct, self.pyobj))
+
+    def _tests_to_rust(self) -> str:
+        if len(self.test_cases) == 0:
+            return ''
+        return f'''
+#[cfg(test)]
+mod tests {{
+    use super::*;
+    use crate::nas::test_utils::*;
+    use deku::prelude::*;
+    use std::io::Cursor;
+
+{'\n\n'.join([test_case.to_rust() for test_case in self.test_cases])}
+}}
+'''
 
     def to_rust(self) -> str:
         excluded_structs = [
@@ -521,6 +572,7 @@ class RustModule:
         excluded_enums = emm_header_names + esm_header_names
         structs = [struct for name, struct in self.cache.struct_cache.items() if name not in excluded_structs]
         enums = [enum for name, enum in self.cache.enum_cache.items() if name not in excluded_enums]
+        test_cases = self._tests_to_rust()
         return f"""
 use deku::prelude::*;
 use deku::ctx::ByteSize;
@@ -529,7 +581,121 @@ use crate::nas::layer3::*;
 
 {'\n\n'.join([rust_struct.to_rust() for rust_struct in structs])}
 {'\n\n'.join([rust_enum.to_rust() for rust_enum in enums])}
+{test_cases}
 """
+
+
+class RustTestCaseValue:
+    def __init__(
+        self,
+        typ: RustEnum | RustPrimitiveType,
+        value: int | str | bytes,
+    ) -> None:
+        self.type = typ
+        self.value = value
+        self.matching_enum_variant = None
+        if isinstance(typ, RustEnum):
+            for var in typ.variants:
+                if value in var.values:
+                    self.matching_enum_variant = var
+        if typ == RustPrimitiveType.VecU8:
+            assert isinstance(value, bytes)
+
+    def to_rust(self) -> str:
+        if isinstance(self.type, RustEnum):
+            if self.matching_enum_variant is None:
+                # FIXME: once https://github.com/sharksforarms/deku/issues/533
+                # is fixed, we can match on the catchall variant value
+                # return f'{self.type.name}::Other({self.value})'
+                return f'{self.type.name}::Other'
+            else:
+                return f'{self.type.name}::{self.matching_enum_variant.name}'
+        elif self.type == RustPrimitiveType.VecU8:
+            assert isinstance(self.value, bytes)
+            byte_ints = [str(int(b)) for b in self.value]
+            return f'vec![{', '.join(byte_ints)}]'
+        else:
+            return f'{self.value}'
+
+
+class RustTestCase:
+    def __init__(self, name: str, input_hexstring: str, struct: RustStruct, pyobj: elt.Envelope) -> None:
+        self._input_hexstring = input_hexstring
+        self.name = name
+        self.struct = struct
+        self.assertions = self._build_assertions([], struct, pyobj)
+
+    def _build_assertions(
+        self,
+        ancestors: list[RustStructField],
+        struct: RustStruct,
+        pyobj: elt.Envelope,
+    ) -> list[Tuple[list[RustStructField], RustTestCaseValue]]:
+        assertions = []
+        for i in range(len(struct.fields)):
+            field = struct.fields[i]
+            # skip values we don't have a parser for, as well as spare bits
+            if field.type is None or field.name.startswith('spare'):
+                continue
+            pyobj_index = struct.pyobj_indices[i]
+            if pyobj_index is None:
+                continue
+            item = pyobj[pyobj_index]
+            # if a value doesn't appear in the payload, pycrate sets a
+            # "transparency" flag. skip these since our rust object won't
+            # have values for these either
+            if item.get_trans():
+                continue
+
+            # if the pyobj is in a layer3 wrapper, unwrap it so we can index it
+            # correctly
+            layer3_wrapper = get_layer3_wrapper(item)
+            if layer3_wrapper is not None:
+                item = item[layer3_wrapper.get_inner_idx()]
+            fields = ancestors + [field]
+
+            # if we're on a concrete value like a number, buffer, or enum,
+            # simply add the assertion. otherwise, we're on a struct, so recurse
+            if isinstance(field.type, (RustPrimitiveType, RustEnum)):
+                assertions.append(
+                    (fields, RustTestCaseValue(field.type, item.get_val()))
+                )
+            else:
+                assert isinstance(item, elt.Envelope)
+                assertions += self._build_assertions(fields, field.type, item)
+
+        return assertions
+
+    def _assertions_to_rust(self, ident_name: str) -> str:
+        lines = []
+        unwrapped_layer3_idents = []
+        for (fields, value) in self.assertions:
+            assert fields[0].layer3_wrapper is not None
+            layer3_ident = fields[0].name
+            if layer3_ident not in unwrapped_layer3_idents:
+                inner_part = f'{fields[0].name}.inner'
+                if fields[0].layer3_wrapper.type.is_tagged():
+                    inner_part += ".as_ref().unwrap()"
+                lines.append(f'let {layer3_ident} = {ident_name}.{inner_part};')
+                unwrapped_layer3_idents.append(layer3_ident)
+            field_train = '.'.join([field.name for field in fields[1:]])
+            lhs = f'{layer3_ident}.{field_train}'
+            rhs = value.to_rust()
+            lines.append(f'assert_eq!({lhs}, {rhs});')
+        return '\n'.join(lines)
+
+    def to_rust(self) -> str:
+        ident_name = 'msg'
+        # skip the header (first two bytes)
+        test_case_bytes = self._input_hexstring[4:]
+        return indent(f'''#[test]
+fn test_{self.name}() {{
+    let mut bytes = Cursor::new(unhexlify("{test_case_bytes}"));
+    let mut reader = Reader::new(&mut bytes);
+    let {ident_name} = {self.struct.name}::from_reader_with_ctx(&mut reader, ())
+        .expect("failed to parse");
+{indent(self._assertions_to_rust(ident_name))}
+}}''')
 
 
 class RustModuleIndex:
@@ -559,21 +725,44 @@ class RustModuleIndex:
                 f.write(mod.to_rust())
 
 
-def generate_module(filepath: str, classes: list[Layer3E]) -> None:
+def generate_module(filepath: str, classes: list[Type[Layer3E]], test_cases: list[str]=[]) -> None:
     index = RustModuleIndex()
+    pycrate_names_to_modules = {}
     for clazz in classes:
         obj = clazz()
         module = RustModule(obj)
         module.resolve_types()
+        pycrate_names_to_modules[obj._name] = module
         index.add(module)
+
+    # generate test cases
+    for case_str in test_cases:
+        # first, parse the payload in pycrate to determine which module this
+        # will be added to
+        case = binascii.unhexlify(case_str)
+        # we don't know apriori whether this is MT or MO, so try both
+        m, e = NASLTE.parse_NASLTE_MO(case)
+        if e != 0:
+            m, e = NASLTE.parse_NASLTE_MT(case)
+            print(case_str, case, m, e)
+            assert e == 0
+        rust_module = pycrate_names_to_modules[m._name]
+
+        # now add the test case
+        rust_module.add_test_case(case_str, case)
+
     index.generate_module(filepath)
 
 
 def main(filepath: str):
     emm_classes = list(NASLTE.EMMTypeMOClasses.values())
     emm_classes.append(NASLTE.EMMTypeMTClasses[69])  # add in the MT version of DetachRequest
-    generate_module(os.path.join(filepath, 'emm'), emm_classes)
-    generate_module(os.path.join(filepath, 'esm'), NASLTE.ESMTypeClasses.values())
+    generate_module(os.path.join(filepath, 'emm'), emm_classes, [
+        '0748610bf602f8108003c8c2e65e9a5804e060c0405202f810c4c25c0a00570220003103e5e0341302f810040511035758a65d0100c1', # EMM TAU Request
+    ])
+    generate_module(os.path.join(filepath, 'esm'), NASLTE.ESMTypeClasses.values(), [
+        '0202d9', # ESM Info Req
+    ])
 
 
 if __name__ == "__main__":

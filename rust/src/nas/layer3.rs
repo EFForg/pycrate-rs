@@ -16,13 +16,10 @@ pub struct Layer3Buffer {
 // IE formats described in Sec 11.2.1.1 of 3GPP TS 24.007
 
 #[derive(Serialize, Debug, Clone)]
-pub enum Type1TV<T> {
-    None,
-    Some {
-        tag: u8,
-        v: u8,
-        inner: T,
-    }
+pub struct Type1TV<T> {
+    tag: u8,
+    v: u8,
+    pub inner: Option<T>,
 }
 
 impl<'a, T> DekuReader<'a, Tag> for Type1TV<T> where T: DekuReader<'a> {
@@ -31,20 +28,20 @@ impl<'a, T> DekuReader<'a, Tag> for Type1TV<T> where T: DekuReader<'a> {
         tag: Tag
     ) -> Result<Self, DekuError> {
         if reader.end() {
-            return Ok(Self::None);
+            return Ok(Self { tag: tag.into(), v: 0, inner: None });
         }
         let t = u8::from_reader_with_ctx(reader, BitSize(4))?;
         let v = u8::from_reader_with_ctx(reader, BitSize(4))?;
         if t != tag.0 {
             reader.seek_relative(-1)
                 .map_err(|err| DekuError::Io(err.kind()))?;
-            return Ok(Self::None);
+            return Ok(Self { tag: tag.into(), v: 0, inner: None });
         }
         let mut cursor = Cursor::new([v]);
         let mut inner_reader = Reader::new(&mut cursor);
         inner_reader.skip_bits(4)?;
-        let inner = T::from_reader_with_ctx(&mut inner_reader, ())?;
-        Ok(Self::Some { tag: tag.into(), v, inner })
+        let inner = Some(T::from_reader_with_ctx(&mut inner_reader, ())?);
+        Ok(Self { tag: tag.into(), v, inner })
     }
 }
 
@@ -96,7 +93,7 @@ impl<'a, T> DekuReader<'a, ByteSize> for Type3V<T> where T: DekuReader<'a> {
 #[derive(Serialize, Debug, Clone)]
 pub struct Type3TV<T> {
     tag: u8,
-    inner: Option<T>,
+    pub inner: Option<T>,
 }
 
 impl<'a, T> DekuReader<'a, (ByteSize, Tag)> for Type3TV<T> where T: DekuReader<'a> {
@@ -200,7 +197,7 @@ impl From<Tag> for u8 {
 pub struct Type4TLV<T> {
     tag: u8,
     length: u8,
-    inner: Option<T>,
+    pub inner: Option<T>,
 }
 
 impl<'a, T> DekuReader<'a, (Tag, NeedsByteSize)> for Type4TLV<T> where T: DekuReader<'a, ByteSize> {
@@ -278,7 +275,7 @@ impl<'a, T> DekuReader<'a> for Type6LVE<T> where T: DekuReader<'a> {
 pub struct Type6TLVE<T> {
     tag: u8,
     length: u16,
-    inner: Option<T>,
+    pub inner: Option<T>,
 }
 
 impl<'a, T> DekuReader<'a, Tag> for Type6TLVE<T> where T: DekuReader<'a> {
