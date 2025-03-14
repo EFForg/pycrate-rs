@@ -7,6 +7,9 @@ from generator.util import indent, upper_camel_case, snake_case
 
 
 class Layer3Type(StrEnum):
+    """Enum to classify the 9 types of layer 3 containers specified in Sec
+    11.2.1.1 of 3GPP TS 24.007.
+    """
     Type1V = 'Type1V'
     Type1TV = 'Type1TV'
     Type2 = 'Type2'
@@ -45,6 +48,9 @@ class Layer3Type(StrEnum):
 
 
 class Layer3Wrapper:
+    """Type for layer 3 containers, allowing for convenient extraction of tags
+    and inner values
+    """
     def __init__(self, obj: elt.Envelope) -> None:
         self.type = Layer3Type(type(obj).__name__)
         if self.type.is_tagged():
@@ -68,6 +74,9 @@ class Layer3Wrapper:
 
 
 def get_layer3_wrapper(obj: elt.Envelope) -> Optional[Layer3Wrapper]:
+    """If obj is wrapped in a layer 3 container, return it. Otherwise return
+    None
+    """
     try:
         return Layer3Wrapper(obj)
     except ValueError:
@@ -88,6 +97,7 @@ def derives(partial_eq=False) -> str:
 
 
 class RustPrimitiveType(IntEnum):
+    """Classifies the various Rust primitive types we'll be serializing."""
     U8 = auto()
     I8 = auto()
     U16 = auto()
@@ -111,6 +121,9 @@ class RustPrimitiveType(IntEnum):
 
     @staticmethod
     def from_pycrate(obj: elt.Atom) -> 'RustPrimitiveType':
+        """Return the RustPrimitiveType corresponding to the pycrate object's
+        value type
+        """
         if isinstance(obj, Buf):
             return RustPrimitiveType.VecU8
         if isinstance(obj, Uint8):
@@ -130,6 +143,10 @@ class RustPrimitiveType(IntEnum):
 
 
 class RustStructField:
+    """Represents a struct member field, containing a type, possibly a layer 3
+    container, and some metadata such as length and padding
+    """
+
     def __init__(
         self,
         name: str,
@@ -166,33 +183,57 @@ class RustStructField:
         if self.type is not None and self.type.is_big_endian():
             deku_attrs.append('endian = "big"')
         if self.is_optional:
+            # this tells Deku to use this field's default value (likely 0) if
+            # there's not enough bytes to read it
             deku_attrs.append('cond = "deku::byte_offset < byte_size"')
+
+            # but if we're an enum, we have to specify that default value
             if isinstance(self.type, RustEnum):
                 default_name = f"{self.type.name}::{self.type.variants[0].name}"
                 deku_attrs.append(f'default = "{default_name}"')
+
+        # build up a Deku context
         ctx = []
         is_layer3_buffer = False
         if self.layer3_wrapper is not None:
+            # a tagged layer 3 container should only be parsed if the read tag
+            # matches what we're expecting. so provide that expected tag in the
+            # ctx
             if self.layer3_wrapper.tag is not None:
                 ctx.append(f'Tag({self.layer3_wrapper.tag})')
+            # keep track of whether we're a Vec<u8> for later, since those need
+            # a ByteSize value in the ctx
             if self.type == RustPrimitiveType.VecU8:
                 is_layer3_buffer = True
-        is_variable_bitfield = isinstance(self.type, RustStruct) and self.type.is_variable_bitfield
+
+        # structs that contain a ton of single-bit fields are usually
+        # variable-length, and will need a ByteSize context as well
+        is_variable_bitfield = isinstance(self.type, RustStruct) and \
+            self.type.is_variable_bitfield
         if is_variable_bitfield or is_layer3_buffer:
             ctx.append("NeedsByteSize")
+
+        # if we ended up adding any context members, add it to the deku
+        # attributes
         if len(ctx):
             deku_attrs.append(f'ctx = "{', '.join(ctx)}"')
+
+        # finally assemble the attrs. note the trailing whitespace
         deku_part = ''
         if len(deku_attrs):
             deku_part = f'#[deku({', '.join(deku_attrs)})] '
         return deku_part
 
     def to_rust(self) -> str:
-        # special case for Type4TLV<Vec<u8>>
+        """Generates an interpolated Rust-friendly struct field member. For
+        example: "#[deku(bits = 2)] field_name: Type1TV<u8>,"
+        """
         type_name = '()' if self.type is None else self.type.rust_type_name()
+
         if self.layer3_wrapper is not None:
             if self.layer3_wrapper.type == Layer3Type.Type4TLV:
                 if self.type == RustPrimitiveType.VecU8:
+                    # special case for Type4TLV<Vec<u8>>
                     type_name = 'Layer3Buffer'
             wrapper_name = str(self.layer3_wrapper.type)
             type_name = f"{wrapper_name}<{type_name}>"
@@ -201,11 +242,15 @@ class RustStructField:
 
 
 class RustStruct:
+    """Represents an entire Rust struct, containing some number of RustStructFields."""
+
     def __init__(
         self,
         name: str,
     ) -> None:
         self.fields: list[RustStructField] = []
+        # we want to match up struct fields with their original pycrate
+        # objects, so keep track of the index into the pycrate object here
         self.pyobj_indices: list[Optional[int]] = []
         self.name = upper_camel_case(name)
 
@@ -225,6 +270,9 @@ class RustStruct:
         return RustStruct(obj._name)
 
     def add_field(self, field: RustStructField, pyobj_index: Optional[int]) -> None:
+        """Append the RustStructField to this struct, noting the index into the
+        struct's corresponding pycrate object for later
+        """
         if self.is_variable_bitfield:
             field.is_optional = True
         self.fields.append(field)
@@ -252,10 +300,19 @@ class RustStruct:
         return False
 
     def to_rust(self) -> str:
+        """Generates the Rust struct declaration, including all requisite Deku
+        attributes to generate its parser
+        """
+
+        # first, go through all our fields and make sure there's no duplicate
+        # names. this works by appending an incrementing number to any dupes
         self._fix_all_duplicates()
+
+        # build up a Deku context, if needed
         deku_ctx = ''
         if self.is_variable_bitfield:
             deku_ctx = '\n#[deku(ctx = "ByteSize(byte_size): ByteSize")]'
+
         return f'''\
 {derives()}{deku_ctx}
 pub struct {self.name} {{
@@ -271,16 +328,26 @@ pub struct {self.name} {{
 
 
 class RustEnumVariant:
+    """Represents a single variant of a RustEnum"""
+
     def __init__(self, name: str, value: int):
         self.name = upper_camel_case(name)
         self.values = [value]
 
     def to_rust(self) -> str:
+        """Generates Rust code for this variant declaration"""
+
+        # since a variant can have multiple matching values, join them with an
+        # "or" symbol to be used in Rust pattern matching
         id_pat = ' | '.join([str(v) for v in self.values])
         return f'#[deku(id_pat = "{id_pat}")] {self.name},'
 
 
 class RustEnum:
+    """Represents a Rust enum. For Deku to generate an enum's parser, it needs
+    to know the value's type (e.g. u8, u16, etc) and its bit-size.
+    """
+
     def __init__(
         self,
         name: str,
@@ -297,6 +364,9 @@ class RustEnum:
 
     @staticmethod
     def from_pycrate(obj: elt.Atom, prefix: str) -> 'RustEnum':
+        """Creates a RustEnum from the given pycrate object, traversing its
+        dictionary of possible values to generate variants
+        """
         rust_enum = RustEnum(
             prefix + obj._name,
             RustPrimitiveType.from_pycrate(obj),
@@ -308,6 +378,9 @@ class RustEnum:
         return rust_enum
 
     def add_variant(self, variant: RustEnumVariant):
+        """Adds a variant to the enum, making sure to track duplicate names as
+        alternate variant values
+        """
         for existing in self.variants:
             if variant.name == existing.name:
                 existing.values += variant.values
@@ -318,6 +391,7 @@ class RustEnum:
         return self.name
 
     def to_rust(self) -> str:
+        """Generates the Rust declaration for this enum."""
         deku_attrs = [
             f'id_type = "{self.type.rust_type_name()}"',
             f'bits = {self.bit_length}',

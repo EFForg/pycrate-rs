@@ -15,19 +15,23 @@ from generator.tests import RustTestCase
 
 
 class RustTypeCache:
+    """Keeps track of generated Rust types based on the pycrate object that
+    created them."""
+
     def __init__(self) -> None:
         self.struct_cache: Dict[str, RustStruct] = {}
         self.enum_cache: Dict[str, RustEnum] = {}
         self.unresolved_structs: List[Tuple[RustStruct, elt.Envelope]] = []
 
-    # Get (or create) a RustStruct for the given pycrate object. RustStructs
-    # created this way are by default pushed onto the stack of unresolved
-    # structs
     def get_rust_struct(
         self,
         pyobj: elt.Envelope,
         add_to_unresolved=True,
     ) -> RustStruct:
+        """Get (or create) a RustStruct for the given pycrate object. RustStructs
+        created this way are by default pushed onto the stack of unresolved
+        structs
+        """
         if pyobj._name in self.struct_cache:
             return self.struct_cache[pyobj._name]
         rust_struct = RustStruct.from_pycrate(pyobj)
@@ -36,10 +40,11 @@ class RustTypeCache:
         self.struct_cache[rust_struct.name] = rust_struct
         return rust_struct
 
-    # Pop an unresolved struct off the stack and for each of its fields,
-    # generate either a primitive type, enum, or struct. Other structs
-    # generated this way are pushed onto the unresolved_structs stack.
     def resolve_struct(self):
+        """Pop an unresolved struct off the stack and for each of its fields,
+        generate either a primitive type, enum, or struct. Other structs
+        generated this way are pushed onto the unresolved_structs stack.
+        """
         rust_struct, pyobj = self.unresolved_structs.pop()
         bit_padding = None
         for i, item in enumerate(pyobj):
@@ -68,8 +73,8 @@ class RustTypeCache:
             )
             rust_struct.add_field(rust_field, i)
 
-    # Get (or create) a RustEnum for the given pycrate object
     def get_rust_enum(self, pyobj: Any, prefix: str) -> RustEnum:
+        """Get (or create) a RustEnum for the given pycrate object"""
         name = prefix + pyobj._name
         if name in self.enum_cache:
             return self.enum_cache[name]
@@ -77,8 +82,10 @@ class RustTypeCache:
         self.enum_cache[rust_enum.name] = rust_enum
         return rust_enum
 
-# A rust module derived from a single pycrate class.
+
 class RustModule:
+    """A Rust module derived from a single pycrate class."""
+
     def __init__(self, pyobj: Layer3E) -> None:
         self.cache = RustTypeCache()
         self.pyobj = pyobj
@@ -90,24 +97,30 @@ class RustModule:
         self.test_cases: list[RustTestCase] = []
 
     def resolve_types(self) -> None:
+        """For every field in the pycrate class, generate a RustStruct or
+        RustEnum wrapped in the corresponding Layer3Wrapper. As these types are
+        generated, they'll be added to the module's RustTypeCache to be fully
+        resolved later.
+        """
         bit_padding = None
 
         for i, item in enumerate(self.pyobj._content):
-            # skip the EMMHeader
+            # skip the header
             if i == 0:
                 assert isinstance(item, (EMMHeader, ESMHeader))
                 continue
 
-            layer3_wrapper = get_layer3_wrapper(item)
-
             # the only time we don't have a layer 3 TLV is bit padding
+            layer3_wrapper = get_layer3_wrapper(item)
             if layer3_wrapper is None:
                 assert isinstance(item, Uint)
                 assert item._name == 'spare'
                 bit_padding = item.get_bl()
                 continue
 
-            # prepare the layer 3 TLV's inner value
+            # prepare the layer 3 TLV's inner value. depending on the type of
+            # layer 3 TLV, sometimes this is stored in _IE_stat, sometimes in
+            # _V
             if item._IE_stat is not None:
                 inner = item._IE_stat
                 bit_length = None if layer3_wrapper.type.is_sized() else inner.get_bl()
@@ -118,7 +131,8 @@ class RustModule:
                     CSN1List,
                     LCSClientId,
                 )):
-                    # passing None for type results in an inner type of unit, aka `()`
+                    # passing None for type results in the Rust value being a
+                    # unit type, aka `()`
                     field = RustStructField(
                         item._name,
                         None,
@@ -176,6 +190,10 @@ class RustModule:
             self.cache.resolve_struct()
 
     def add_test_case(self, input_hexstring: str, input_bytes: bytes) -> None:
+        """Given some input bytes, generate a RustTestCase which asserts
+        equality for every parsed field
+        """
+
         # the pycrate method from_bytes() sets all of the objects internal
         # values according to the binary payload, and since we've associated
         # each rust element with a corresponding pycrate element (or index into
@@ -183,7 +201,12 @@ class RustModule:
         # pycrate value
         self.pyobj.from_bytes(input_bytes)
         name = f'case_{len(self.test_cases) + 1}'
-        self.test_cases.append(RustTestCase(name, input_hexstring, self.base_struct, self.pyobj))
+        self.test_cases.append(RustTestCase(
+            name,
+            input_hexstring,
+            self.base_struct,
+            self.pyobj
+        ))
 
     def _tests_to_rust(self) -> str:
         total_assertions = sum(len(c.assertions) for c in self.test_cases)
@@ -204,6 +227,9 @@ mod tests {{
 '''
 
     def to_rust(self) -> str:
+        """Generates Rust code for this module's struct and enums, along with
+        any tests cases.
+        """
         excluded_structs = [
             'EMMHeader',
             'ESMHeader',
@@ -236,6 +262,10 @@ use crate::nas::layer3::*;
 
 
 class RustModuleIndex:
+    """Contains a number of RustModules, allowing us to output a mod.rs which
+    declares them all
+    """
+
     def __init__(self) -> None:
         self.modules: List[RustModule] = []
 
@@ -250,7 +280,7 @@ class RustModuleIndex:
 {module_text}"""
 
     def generate_module(self, filepath: str) -> None:
-        os.makedirs(filepath)
+        os.makedirs(filepath, exist_ok=True)
         index_path = os.path.join(filepath, 'mod.rs')
         with open(index_path, 'w') as f:
             f.write(self.to_rust())
@@ -262,6 +292,11 @@ class RustModuleIndex:
 
 
 def generate_module(filepath: str, classes: list[Type[Layer3E]], test_cases: list[str]=[]) -> None:
+    """Given a set of pycrate classes, creates a directory containing a Rust
+    module for each class, as well as a mod.rs file declaring each of them. Also
+    appends a standard Rust unit test section to each module for each test case
+    provided.
+    """
     index = RustModuleIndex()
     pycrate_names_to_modules = {}
     for clazz in classes:

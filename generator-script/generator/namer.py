@@ -9,6 +9,10 @@ def ignore_token(token: str) -> bool:
 
 inflect_engine = inflect.engine()
 def tokenize(input: str) -> list[str]:
+    """Splits an input string into a list of tokens, splitting not only on
+    whitespace and punctuation, but also on camel-cased word boundaries (e.g.
+    "FooBar" -> ["Foo", "Bar"])
+    """
     tokens_re = re.compile(r"([A-Z][a-z]*|0x[\d]+|[\d]+|[^A-Za-z\d])")
     acronym = None
     tokens = []
@@ -41,6 +45,8 @@ def tokenize(input: str) -> list[str]:
 
 
 class Name:
+    """Container for any string we'd like to conver to snake or camel case"""
+
     def __init__(self, raw: str):
         # special case this since hypens are annoying
         if raw == '-':
