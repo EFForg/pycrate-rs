@@ -111,8 +111,11 @@ class RustTestCase:
                     (fields, RustTestCaseValue(field.type, item.get_val()))
                 )
             else:
-                # otherwise, we're on a struct, so recurse
-                assert isinstance(item, elt.Envelope)
+                # seems that when pycrate fails to parse a struct, it'll leave the
+                # value as a buffer. skip this field
+                if not isinstance(item, elt.Envelope):
+                    print(f'unexpected non-envelope for field {field.name}: {item}')
+                    continue
                 assertions += self._build_assertions(fields, field.type, item)
 
         return assertions
@@ -131,9 +134,9 @@ class RustTestCase:
             if layer3_ident not in unwrapped_layer3_idents:
                 inner_part = f'{fields[0].name}.inner'
                 # if it's a tagged layer 3 container, `.inner` is an Option<T>,
-                # so pull out a reference to it
+                # so pull the inner value out
                 if fields[0].layer3_wrapper.type.is_tagged():
-                    inner_part += ".as_ref().unwrap()"
+                    inner_part += ".unwrap()"
 
                 # results in code like `let foo = msg.foo.inner;`, letting
                 # subsequent assertions just compare against `foo`

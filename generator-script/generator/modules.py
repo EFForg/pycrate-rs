@@ -199,13 +199,14 @@ class RustModule:
         # each rust element with a corresponding pycrate element (or index into
         # element), this lets us easily match rust values to the expected parsed
         # pycrate value
-        self.pyobj.from_bytes(input_bytes)
+        x = self.pyobj.__class__()
+        x.from_bytes(input_bytes)
         name = f'case_{len(self.test_cases) + 1}'
         self.test_cases.append(RustTestCase(
             name,
             input_hexstring,
             self.base_struct,
-            self.pyobj
+            x
         ))
 
     def _tests_to_rust(self) -> str:
