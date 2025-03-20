@@ -12,6 +12,7 @@ from pycrate_mobile.TS24301_IE import LCSClientId
 
 from generator.rust_types import RustStruct, RustEnum, RustPrimitiveType, RustStructField, get_layer3_wrapper
 from generator.tests import RustTestCase
+from generator.util import snake_case
 
 
 class RustTypeCache:
@@ -100,7 +101,7 @@ class RustModule:
         # don't mark the base struct as unresolved, since we'll be manually
         # resolving it later
         self.base_struct = self.cache.get_rust_struct(self.pyobj, False)
-        self.name = self.base_struct.name.lower()
+        self.name = snake_case(self.base_struct.name)
         self.test_cases: list[RustTestCase] = []
 
     def resolve_types(self) -> None:
