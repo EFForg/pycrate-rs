@@ -1,3 +1,4 @@
+from enum import IntEnum, auto
 from typing import Tuple
 from pycrate_core import elt
 
@@ -50,6 +51,11 @@ class RustTestCaseValue:
             return f'{self.value}'
 
 
+class NASType(IntEnum):
+    EMM = auto()
+    ESM = auto()
+
+
 class RustTestCase:
     """Represents a single test function within a module's unit tests. Each
     RustTestCase parses its input hexstring directly to the given RustStruct,
@@ -67,6 +73,13 @@ class RustTestCase:
         self._input_hexstring = input_hexstring
         self.name = name
         self.struct = struct
+        type_name = pyobj.__class__.__name__
+        if type_name.startswith('EMM'):
+            self.nas_type = NASType.EMM
+        elif type_name.startswith('ESM'):
+            self.nas_type = NASType.ESM
+        else:
+            raise ValueError(f'unknown test object type {type_name}')
         self.assertions = self._build_assertions([], struct, pyobj)
 
     def _build_assertions(
@@ -155,8 +168,9 @@ class RustTestCase:
         """
 
         ident_name = 'msg'
-        # skip the NAS header (first two bytes)
-        test_case_bytes = self._input_hexstring[4:]
+        # skip the NAS header (two bytes for EMM, three for ESM)
+        bytes_to_skip = 2 if self.nas_type == NASType.EMM else 3
+        test_case_bytes = self._input_hexstring[bytes_to_skip * 2:]
         return indent(f'''#[test]
 fn test_{self.name}() {{
     let mut bytes = Cursor::new(unhexlify("{test_case_bytes}"));

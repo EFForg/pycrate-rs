@@ -5,12 +5,26 @@ use deku::ctx::{BitSize, ByteSize, Endian};
 use deku::prelude::*;
 use serde::Serialize;
 
+// A kind of marker type that exists as kind of a hack. This is needed because
+// the following types, there's a lot of impls that look like `impl DekuRead<A>
+// for Type<B> where B: DekuRead<C>`, and frequently that impl needs to be
+// different depending on whether C includes the `ByteSize` context. But Rust
+// doesn't allow separate `impl DekuRead<A> for Type<B> where B: DekuRead<C>`
+// for different values of C (this is a feature known as "trait
+// specialization"). So, we shoehorn this empty type into `A` whenever `C`
+// differs based on the existence of `ByteSize`.
 pub struct NeedsByteSize;
 
 #[derive(Serialize, DekuRead, Debug, Clone)]
 #[deku(ctx = "ByteSize(byte_size): ByteSize")]
 pub struct Layer3Buffer {
     #[deku(count = "byte_size")] pub buf: Vec<u8>,
+}
+
+impl PartialEq<Vec<u8>> for Layer3Buffer {
+    fn eq(&self, other: &Vec<u8>) -> bool {
+        self.buf.eq(other)
+    }
 }
 
 // IE formats described in Sec 11.2.1.1 of 3GPP TS 24.007
@@ -90,6 +104,19 @@ impl<'a, T> DekuReader<'a, ByteSize> for Type3V<T> where T: DekuReader<'a> {
     }
 }
 
+impl<'a, T> DekuReader<'a, (ByteSize, NeedsByteSize)> for Type3V<T> where T: DekuReader<'a, ByteSize> {
+    fn from_reader_with_ctx<R: Read+Seek>(
+        reader: &mut Reader<R>,
+        (ByteSize(byte_size), _): (ByteSize, NeedsByteSize)
+    ) -> Result<Self, DekuError> {
+        let buf = read_bytes_from_reader(reader, byte_size)?;
+        let mut cursor = Cursor::new(buf);
+        let mut inner_reader = Reader::new(&mut cursor);
+        let inner = T::from_reader_with_ctx(&mut inner_reader, ByteSize(byte_size))?;
+        Ok(Type3V { inner })
+    }
+}
+
 #[derive(Serialize, Debug, Clone)]
 pub struct Type3TV<T> {
     tag: u8,
@@ -108,6 +135,22 @@ impl<'a, T> DekuReader<'a, (ByteSize, Tag)> for Type3TV<T> where T: DekuReader<'
         let mut cursor = Cursor::new(buf);
         let mut inner_reader = Reader::new(&mut cursor);
         let inner = Some(T::from_reader_with_ctx(&mut inner_reader, ())?);
+        Ok(Self { tag: tag.into(), inner })
+    }
+}
+
+impl<'a, T> DekuReader<'a, (ByteSize, Tag, NeedsByteSize)> for Type3TV<T> where T: DekuReader<'a, ByteSize> {
+    fn from_reader_with_ctx<R: Read+Seek>(
+        reader: &mut Reader<R>,
+        (ByteSize(byte_size), tag, _): (ByteSize, Tag, NeedsByteSize)
+    ) -> Result<Self, DekuError> {
+        if !check_tag(reader, BitSize(8), tag)? {
+            return Ok(Self { tag: tag.into(), inner: None });
+        }
+        let buf = read_bytes_from_reader(reader, byte_size)?;
+        let mut cursor = Cursor::new(buf);
+        let mut inner_reader = Reader::new(&mut cursor);
+        let inner = Some(T::from_reader_with_ctx(&mut inner_reader, ByteSize(byte_size))?);
         Ok(Self { tag: tag.into(), inner })
     }
 }
@@ -271,6 +314,20 @@ impl<'a, T> DekuReader<'a> for Type6LVE<T> where T: DekuReader<'a> {
     }
 }
 
+impl<'a, T> DekuReader<'a, NeedsByteSize> for Type6LVE<T> where T: DekuReader<'a, ByteSize> {
+    fn from_reader_with_ctx<R: Read+Seek>(
+        reader: &mut Reader<R>,
+        _: NeedsByteSize
+    ) -> Result<Self, DekuError> {
+        let length = u16::from_reader_with_ctx(reader, Endian::Big)?;
+        let buf = read_bytes_from_reader(reader, length as usize)?;
+        let mut cursor = Cursor::new(buf);
+        let mut inner_reader = Reader::new(&mut cursor);
+        let inner = T::from_reader_with_ctx(&mut inner_reader, ByteSize(length as usize))?;
+        Ok(Self { length, inner })
+    }
+}
+
 #[derive(Serialize, Debug, Clone)]
 pub struct Type6TLVE<T> {
     tag: u8,
@@ -291,6 +348,23 @@ impl<'a, T> DekuReader<'a, Tag> for Type6TLVE<T> where T: DekuReader<'a> {
         let mut cursor = Cursor::new(buf);
         let mut inner_reader = Reader::new(&mut cursor);
         let inner = Some(T::from_reader_with_ctx(&mut inner_reader, ())?);
+        Ok(Self { tag: tag.into(), length, inner })
+    }
+}
+
+impl<'a, T> DekuReader<'a, (Tag, NeedsByteSize)> for Type6TLVE<T> where T: DekuReader<'a, ByteSize> {
+    fn from_reader_with_ctx<R: Read+Seek>(
+        reader: &mut Reader<R>,
+        (tag, _): (Tag, NeedsByteSize),
+    ) -> Result<Self, DekuError> {
+        if !check_tag(reader, BitSize(8), tag)? {
+            return Ok(Self { tag: tag.into(), length: 0, inner: None });
+        }
+        let length = u16::from_reader_with_ctx(reader, Endian::Big)?;
+        let buf = read_bytes_from_reader(reader, length as usize)?;
+        let mut cursor = Cursor::new(buf);
+        let mut inner_reader = Reader::new(&mut cursor);
+        let inner = Some(T::from_reader_with_ctx(&mut inner_reader, ByteSize(length as usize))?);
         Ok(Self { tag: tag.into(), length, inner })
     }
 }

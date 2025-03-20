@@ -49,10 +49,16 @@ class RustTypeCache:
         bit_padding = None
         for i, item in enumerate(pyobj):
             bit_length = None
+            is_final_buf = False
             if isinstance(item, elt.Atom):
                 if isinstance(item, Buf):
                     rust_type = RustPrimitiveType.VecU8
                     bit_length = item.get_bl()
+                    # if the given bitlength is 0, we're assuming that this
+                    # buffer is the final field in the struct, and ought to
+                    # consume all remaining bytes
+                    if bit_length == 0:
+                        is_final_buf = True
                 elif item._dic:
                     rust_enum = self.get_rust_enum(item, rust_struct.name)
                     bit_length = item.get_bl()
@@ -71,6 +77,7 @@ class RustTypeCache:
                 bit_length,
                 bit_padding,
             )
+            rust_field.is_final_buf = is_final_buf
             rust_struct.add_field(rust_field, i)
 
     def get_rust_enum(self, pyobj: Any, prefix: str) -> RustEnum:
@@ -123,48 +130,31 @@ class RustModule:
             # _V
             if item._IE_stat is not None:
                 inner = item._IE_stat
-                bit_length = None if layer3_wrapper.type.is_sized() else inner.get_bl()
-                # check for unsupported types
-                if isinstance(inner, (
-                    elt.Sequence,
-                    elt.Array,
-                    CSN1List,
-                    LCSClientId,
-                )):
-                    # passing None for type results in the Rust value being a
-                    # unit type, aka `()`
-                    field = RustStructField(
-                        item._name,
-                        None,
-                        layer3_wrapper,
-                        bit_length,
-                        bit_padding,
-                    )
-                    self.base_struct.add_field(field, None)
-                    continue
-                # check for Buf-type IEs
-                if isinstance(inner, elt.Atom):
-                    field = RustStructField(
-                        item._name,
-                        RustPrimitiveType.from_pycrate(inner),
-                        layer3_wrapper,
-                        bit_length,
-                        bit_padding
-                    )
-                    self.base_struct.add_field(field, i)
-                    continue
-                field_struct = self.cache.get_rust_struct(inner)
+            else:
+                inner = item._V
+
+            bit_length = None if layer3_wrapper.type.is_sized() else inner.get_bl()
+            # check for unsupported types
+            if isinstance(inner, (
+                elt.Sequence,
+                elt.Array,
+                CSN1List,
+                LCSClientId,
+            )):
+                # passing None for type results in the Rust value being a
+                # unit type, aka `()`
                 field = RustStructField(
                     item._name,
-                    field_struct,
+                    None,
                     layer3_wrapper,
                     bit_length,
                     bit_padding,
                 )
-                self.base_struct.add_field(field, i)
-            else:
-                inner = item._V
-                bit_length = None if layer3_wrapper.type.is_sized() else inner.get_bl()
+                bit_padding = None
+                self.base_struct.add_field(field, None)
+                continue
+            if isinstance(inner, elt.Atom):
+                # check for enums
                 if inner._dic is not None:
                     field_enum = self.cache.get_rust_enum(inner, item._name)
                     field = RustStructField(
@@ -174,16 +164,28 @@ class RustModule:
                         bit_length,
                         bit_padding,
                     )
+                    bit_padding = None
                     self.base_struct.add_field(field, i)
-                else:
-                    field = RustStructField(
-                        item._name,
-                        None,
-                        layer3_wrapper,
-                        bit_length,
-                        bit_padding,
-                    )
-                    self.base_struct.add_field(field, None)
+                    continue
+                field = RustStructField(
+                    item._name,
+                    RustPrimitiveType.from_pycrate(inner),
+                    layer3_wrapper,
+                    bit_length,
+                    bit_padding
+                )
+                bit_padding = None
+                self.base_struct.add_field(field, i)
+                continue
+            field_struct = self.cache.get_rust_struct(inner)
+            field = RustStructField(
+                item._name,
+                field_struct,
+                layer3_wrapper,
+                bit_length,
+                bit_padding,
+            )
+            self.base_struct.add_field(field, i)
             bit_padding = None
 
         while len(self.cache.unresolved_structs):

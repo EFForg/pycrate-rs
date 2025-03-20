@@ -1,6 +1,6 @@
 import binascii
 import os
-from typing import Tuple
+from typing import Tuple, Dict
 from scapy.utils import rdpcap
 from pycrate_mobile import NASLTE
 from pycrate_core import elt
@@ -22,42 +22,45 @@ GSMTAP_HDR_END = GSMTAP_HDR_START + 16
 GSMTAP_TYPE_NAS = 18
 
 
-def get_test_cases(pcap_filepath: str) -> Tuple[list[str], list[str]]:
+def get_test_cases(pcap_dir_filepath: str) -> Tuple[list[str], list[str]]:
     types_to_skip = [
         'EMMServiceRequest',
         'EMMSecProtNASMessage',
     ]
-    types_already_tested = []
+    longest_testcase: Dict[str, str] = {}
+    for entry in os.scandir(pcap_dir_filepath):
+        with open(entry.path, 'rb') as f:
+            pcap_file = rdpcap(f)
+            for i, packet in enumerate(pcap_file):
+                gsmtap_hdr = packet.load[GSMTAP_HDR_START:GSMTAP_HDR_END]
+                gsmtap_type = gsmtap_hdr[2]
+                packet_data = packet.load[GSMTAP_HDR_END:]
+                packet_data_str = packet_data.hex()
+                if gsmtap_type == GSMTAP_TYPE_NAS:
+                    try:
+                        packet = parse_nas_packet(packet_data)
+                        type_name = packet.__class__.__name__
+                        existing_testcase = longest_testcase.get(type_name, '')
+                        if len(existing_testcase) < len(packet_data_str):
+                            longest_testcase[type_name] = packet_data_str
+                    except TypeError as e:
+                        print(f"err on packet {i}: {e}")
     emm_tests = []
     esm_tests = []
-    with open(pcap_filepath, 'rb') as f:
-        pcap_file = rdpcap(f)
-        for i, packet in enumerate(pcap_file):
-            gsmtap_hdr = packet.load[GSMTAP_HDR_START:GSMTAP_HDR_END]
-            gsmtap_type = gsmtap_hdr[2]
-            packet_data = packet.load[GSMTAP_HDR_END:]
-            packet_data_str = packet_data.hex()
-            if gsmtap_type == GSMTAP_TYPE_NAS:
-                try:
-                    packet = parse_nas_packet(packet_data)
-                    type_name = packet.__class__.__name__
-                    if type_name in types_to_skip:
-                        continue
-                    if type_name.startswith("EMM"):
-                        emm_tests.append(packet_data_str)
-                        types_to_skip.append(type_name)
-                    elif type_name.startswith("ESM"):
-                        esm_tests.append(packet_data_str)
-                        types_to_skip.append(type_name)
-                    else:
-                        print(f'unexpected packet type {type_name}')
-                except TypeError as e:
-                    print(f"err on packet {i}: {e}")
+    for type_name, testcase in longest_testcase.items():
+        if type_name in types_to_skip:
+            continue
+        if type_name.startswith("EMM"):
+            emm_tests.append(testcase)
+        elif type_name.startswith("ESM"):
+            esm_tests.append(testcase)
+        else:
+            print(f'unexpected packet type {type_name}')
     return (emm_tests, esm_tests)
 
 
-def main(output_filepath: str, pcap_filepath: str):
-    emm_tests, esm_tests = get_test_cases(pcap_filepath)
+def main(output_filepath: str, pcap_dir_filepath: str):
+    emm_tests, esm_tests = get_test_cases(pcap_dir_filepath)
     emm_classes = list(NASLTE.EMMTypeMOClasses.values())
     emm_classes.append(NASLTE.EMMTypeMTClasses[69])  # add in the MT version of DetachRequest
     generate_module(os.path.join(output_filepath, 'emm'), emm_classes, [

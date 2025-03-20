@@ -1,3 +1,4 @@
+from collections import defaultdict
 from scapy.utils import rdpcap
 from pycrate_mobile.TS24007 import IE, Layer3E
 from pycrate_core import elt
@@ -50,6 +51,7 @@ def parse_nas_packet(data: bytes) -> elt.Envelope:
 
 def read_nas_packets(input_file: os.DirEntry, output_dirname: str) -> None:
     packets = {}
+    packet_types = defaultdict(lambda: 0)
     with open(input_file.path, 'rb') as f:
         pcap_file = rdpcap(f)
         for i, packet in enumerate(pcap_file):
@@ -59,6 +61,7 @@ def read_nas_packets(input_file: os.DirEntry, output_dirname: str) -> None:
             if gsmtap_type == GSMTAP_TYPE_NAS:
                 try:
                     packet = parse_nas_packet(packet_data)
+                    packet_types[packet.__class__.__name__] += 1
                     packets[i] = json.loads(packet.to_json())
                 except TypeError as e:
                     print(f"err on packet {i}: {e}")
@@ -68,6 +71,7 @@ def read_nas_packets(input_file: os.DirEntry, output_dirname: str) -> None:
     )
     with open(output_filename, 'w') as f:
         f.write(json.dumps(packets, indent=4))
+    print(json.dumps(packet_types, indent=4))
     print(f"{input_file.path} -> {output_filename}")
 
 
