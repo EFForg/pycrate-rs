@@ -1,8 +1,33 @@
 use deku::prelude::*;
-use std::io::{Read, Seek};
 use serde::Serialize;
+use std::io::{Read, Seek};
 
-use super::generated::esm::{esm_act_dedi_eps_bearer_ctxt_accept::ESMActDediEPSBearerCtxtAccept, esm_act_dedi_eps_bearer_ctxt_reject::ESMActDediEPSBearerCtxtReject, esm_act_dedi_eps_bearer_ctxt_request::ESMActDediEPSBearerCtxtRequest, esm_act_default_eps_bearer_ctxt_accept::ESMActDefaultEPSBearerCtxtAccept, esm_act_default_eps_bearer_ctxt_reject::ESMActDefaultEPSBearerCtxtReject, esm_act_default_eps_bearer_ctxt_request::ESMActDefaultEPSBearerCtxtRequest, esm_bearer_resource_alloc_reject::ESMBearerResourceAllocReject, esm_bearer_resource_alloc_request::ESMBearerResourceAllocRequest, esm_bearer_resource_modif_reject::ESMBearerResourceModifReject, esm_bearer_resource_modif_request::ESMBearerResourceModifRequest, esm_data_transport::ESMDataTransport, esm_deact_eps_bearer_ctxt_accept::ESMDeactEPSBearerCtxtAccept, esm_deact_eps_bearer_ctxt_request::ESMDeactEPSBearerCtxtRequest, esm_dummy_message::ESMDummyMessage, esm_information_request::ESMInformationRequest, esm_information_response::ESMInformationResponse, esm_modify_eps_bearer_ctxt_accept::ESMModifyEPSBearerCtxtAccept, esm_modify_eps_bearer_ctxt_reject::ESMModifyEPSBearerCtxtReject, esm_modify_eps_bearer_ctxt_request::ESMModifyEPSBearerCtxtRequest, esm_notification::ESMNotification, esm_remote_ue_report::ESMRemoteUEReport, esm_remote_ue_response::ESMRemoteUEResponse, esm_status::ESMStatus, esmpdn_connectivity_reject::ESMPDNConnectivityReject, esmpdn_connectivity_request::ESMPDNConnectivityRequest, esmpdn_disconnect_reject::ESMPDNDisconnectReject, esmpdn_disconnect_request::ESMPDNDisconnectRequest};
+use super::generated::esm::{
+    esm_act_dedi_eps_bearer_ctxt_accept::ESMActDediEPSBearerCtxtAccept,
+    esm_act_dedi_eps_bearer_ctxt_reject::ESMActDediEPSBearerCtxtReject,
+    esm_act_dedi_eps_bearer_ctxt_request::ESMActDediEPSBearerCtxtRequest,
+    esm_act_default_eps_bearer_ctxt_accept::ESMActDefaultEPSBearerCtxtAccept,
+    esm_act_default_eps_bearer_ctxt_reject::ESMActDefaultEPSBearerCtxtReject,
+    esm_act_default_eps_bearer_ctxt_request::ESMActDefaultEPSBearerCtxtRequest,
+    esm_bearer_resource_alloc_reject::ESMBearerResourceAllocReject,
+    esm_bearer_resource_alloc_request::ESMBearerResourceAllocRequest,
+    esm_bearer_resource_modif_reject::ESMBearerResourceModifReject,
+    esm_bearer_resource_modif_request::ESMBearerResourceModifRequest,
+    esm_data_transport::ESMDataTransport,
+    esm_deact_eps_bearer_ctxt_accept::ESMDeactEPSBearerCtxtAccept,
+    esm_deact_eps_bearer_ctxt_request::ESMDeactEPSBearerCtxtRequest,
+    esm_dummy_message::ESMDummyMessage, esm_information_request::ESMInformationRequest,
+    esm_information_response::ESMInformationResponse,
+    esm_modify_eps_bearer_ctxt_accept::ESMModifyEPSBearerCtxtAccept,
+    esm_modify_eps_bearer_ctxt_reject::ESMModifyEPSBearerCtxtReject,
+    esm_modify_eps_bearer_ctxt_request::ESMModifyEPSBearerCtxtRequest,
+    esm_notification::ESMNotification, esm_remote_ue_report::ESMRemoteUEReport,
+    esm_remote_ue_response::ESMRemoteUEResponse, esm_status::ESMStatus,
+    esmpdn_connectivity_reject::ESMPDNConnectivityReject,
+    esmpdn_connectivity_request::ESMPDNConnectivityRequest,
+    esmpdn_disconnect_reject::ESMPDNDisconnectReject,
+    esmpdn_disconnect_request::ESMPDNDisconnectRequest,
+};
 
 #[derive(DekuRead, DekuWrite, Debug)]
 #[deku(id_type = "u8")]
@@ -67,7 +92,10 @@ pub enum ESMMessage {
     DataTransport(ESMDataTransport),
 }
 
-pub fn parse_esm_nas<R: Read+Seek>(esm_type: ESMType, mut reader: Reader<R>) -> Result<ESMMessage, DekuError> {
+pub fn parse_esm_nas<R: Read + Seek>(
+    esm_type: ESMType,
+    mut reader: Reader<R>,
+) -> Result<ESMMessage, DekuError> {
     Ok(match esm_type {
         ESMType::ActDefaultEPSBearerCtxtRequest => ESMMessage::ActDefaultEPSBearerCtxtRequest(ESMActDefaultEPSBearerCtxtRequest::from_reader_with_ctx(&mut reader, ())?),
         ESMType::ActDefaultEPSBearerCtxtAccept => ESMMessage::ActDefaultEPSBearerCtxtAccept(ESMActDefaultEPSBearerCtxtAccept::from_reader_with_ctx(&mut reader, ())?),

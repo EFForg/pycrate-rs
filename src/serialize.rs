@@ -1,9 +1,12 @@
 use std::{collections::BTreeMap, fs::File, io::Write, path::PathBuf};
 
+use clap::Parser;
+use pcap_file::{
+    self,
+    pcapng::{Block, PcapNgReader},
+};
 use pycrate_rs::nas::{NASMessage, ParseError};
 use serde_json;
-use pcap_file::{self, pcapng::{Block, PcapNgReader}};
-use clap::Parser;
 
 #[derive(Parser, Debug)]
 struct Cli {
@@ -21,7 +24,7 @@ fn ensure_output_dir(path: &PathBuf) -> std::io::Result<()> {
             std::fs::create_dir_all(path)?;
             path.read_dir()?;
             Ok(())
-        },
+        }
         Err(e) => Err(e),
     }
 }
@@ -46,14 +49,19 @@ fn process_pcap(mut pcap_file: PcapNgReader<File>, output_file: &mut File) -> st
         let packet_data = &data[GSMTAP_HDR_END..];
         if gsmtap_type == GSMTAP_TYPE_NAS {
             match NASMessage::parse(packet_data) {
-                Ok(packet) => { msgs.insert(i, Ok(packet)); },
-                Err(ParseError::EncryptedNASMessage) => { msgs.insert(i, Err("(encrypted NAS message)".to_string())); },
-                Err(err) => { msgs.insert(i, Err(format!("err on packet {}: {}", i, err))); },
+                Ok(packet) => {
+                    msgs.insert(i, Ok(packet));
+                }
+                Err(ParseError::EncryptedNASMessage) => {
+                    msgs.insert(i, Err("(encrypted NAS message)".to_string()));
+                }
+                Err(err) => {
+                    msgs.insert(i, Err(format!("err on packet {}: {}", i, err)));
+                }
             }
         }
     }
-    let json_output = serde_json::to_string_pretty(&msgs)
-        .expect("failed to serialize output");
+    let json_output = serde_json::to_string_pretty(&msgs).expect("failed to serialize output");
     output_file.write_all(json_output.as_bytes())?;
     Ok(())
 }
@@ -61,27 +69,22 @@ fn process_pcap(mut pcap_file: PcapNgReader<File>, output_file: &mut File) -> st
 fn main() {
     let args = Cli::parse();
     env_logger::init();
-    let input_dir = args.input_dir.read_dir()
-        .expect("input_dir doesn't exit");
-    ensure_output_dir(&args.output_dir)
-        .expect("error opening/creating output dir");
+    let input_dir = args.input_dir.read_dir().expect("input_dir doesn't exit");
+    ensure_output_dir(&args.output_dir).expect("error opening/creating output dir");
     for maybe_entry in input_dir {
         let entry = maybe_entry.expect("can't read file");
         match entry.path().extension() {
-            Some(ext) if ext == "pcap" => {},
+            Some(ext) if ext == "pcap" => {}
             _ => continue,
         }
-        let pcap_file = std::fs::File::open(entry.path())
-            .expect("failed to open file");
-        let pcap_reader = PcapNgReader::new(pcap_file)
-            .expect("failed to read pcap file");
+        let pcap_file = std::fs::File::open(entry.path()).expect("failed to open file");
+        let pcap_reader = PcapNgReader::new(pcap_file).expect("failed to read pcap file");
         let mut output_file_path = args.output_dir.clone();
         output_file_path.push(entry.path().file_stem().unwrap());
         output_file_path.set_extension("json");
-        let mut output_file = std::fs::File::create(&output_file_path)
-            .expect("failed to create output file");
+        let mut output_file =
+            std::fs::File::create(&output_file_path).expect("failed to create output file");
         println!("{:?} -> {:?}", entry.path(), &output_file_path);
-        process_pcap(pcap_reader, &mut output_file)
-            .expect("failed to process pcap file");
+        process_pcap(pcap_reader, &mut output_file).expect("failed to process pcap file");
     }
 }

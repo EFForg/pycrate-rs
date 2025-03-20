@@ -2,7 +2,31 @@ use deku::prelude::*;
 use serde::Serialize;
 use std::io::{Read, Seek, SeekFrom};
 
-use super::generated::emm::{emm_attach_accept::EMMAttachAccept, emm_attach_complete::EMMAttachComplete, emm_attach_reject::EMMAttachReject, emm_attach_request::EMMAttachRequest, emm_authentication_failure::EMMAuthenticationFailure, emm_authentication_reject::EMMAuthenticationReject, emm_authentication_request::EMMAuthenticationRequest, emm_authentication_response::EMMAuthenticationResponse, emm_detach_accept::EMMDetachAccept, emm_detach_request_mo::EMMDetachRequestMO, emm_detach_request_mt::EMMDetachRequestMT, emm_ext_service_request::EMMExtServiceRequest, emm_identity_request::EMMIdentityRequest, emm_identity_response::EMMIdentityResponse, emm_information::EMMInformation, emm_security_mode_command::EMMSecurityModeCommand, emm_security_mode_complete::EMMSecurityModeComplete, emm_security_mode_reject::EMMSecurityModeReject, emm_service_accept::EMMServiceAccept, emm_service_reject::EMMServiceReject, emm_status::EMMStatus, emm_tracking_area_update_accept::EMMTrackingAreaUpdateAccept, emm_tracking_area_update_complete::EMMTrackingAreaUpdateComplete, emm_tracking_area_update_reject::EMMTrackingAreaUpdateReject, emm_tracking_area_update_request::EMMTrackingAreaUpdateRequest, emmcp_service_request::EMMCPServiceRequest, emmcs_service_notification::EMMCSServiceNotification, emmdl_generic_nas_transport::EMMDLGenericNASTransport, emmdlnas_transport::EMMDLNASTransport, emmguti_realloc_command::EMMGUTIReallocCommand, emmguti_realloc_complete::EMMGUTIReallocComplete, emmul_generic_nas_transport::EMMULGenericNASTransport, emmulnas_transport::EMMULNASTransport};
+use super::generated::emm::{
+    emm_attach_accept::EMMAttachAccept, emm_attach_complete::EMMAttachComplete,
+    emm_attach_reject::EMMAttachReject, emm_attach_request::EMMAttachRequest,
+    emm_authentication_failure::EMMAuthenticationFailure,
+    emm_authentication_reject::EMMAuthenticationReject,
+    emm_authentication_request::EMMAuthenticationRequest,
+    emm_authentication_response::EMMAuthenticationResponse, emm_detach_accept::EMMDetachAccept,
+    emm_detach_request_mo::EMMDetachRequestMO, emm_detach_request_mt::EMMDetachRequestMT,
+    emm_ext_service_request::EMMExtServiceRequest, emm_identity_request::EMMIdentityRequest,
+    emm_identity_response::EMMIdentityResponse, emm_information::EMMInformation,
+    emm_security_mode_command::EMMSecurityModeCommand,
+    emm_security_mode_complete::EMMSecurityModeComplete,
+    emm_security_mode_reject::EMMSecurityModeReject, emm_service_accept::EMMServiceAccept,
+    emm_service_reject::EMMServiceReject, emm_status::EMMStatus,
+    emm_tracking_area_update_accept::EMMTrackingAreaUpdateAccept,
+    emm_tracking_area_update_complete::EMMTrackingAreaUpdateComplete,
+    emm_tracking_area_update_reject::EMMTrackingAreaUpdateReject,
+    emm_tracking_area_update_request::EMMTrackingAreaUpdateRequest,
+    emmcp_service_request::EMMCPServiceRequest,
+    emmcs_service_notification::EMMCSServiceNotification,
+    emmdl_generic_nas_transport::EMMDLGenericNASTransport, emmdlnas_transport::EMMDLNASTransport,
+    emmguti_realloc_command::EMMGUTIReallocCommand,
+    emmguti_realloc_complete::EMMGUTIReallocComplete,
+    emmul_generic_nas_transport::EMMULGenericNASTransport, emmulnas_transport::EMMULNASTransport,
+};
 
 #[derive(DekuRead, DekuWrite, Debug)]
 #[deku(id_type = "u8")]
@@ -80,10 +104,13 @@ pub enum EMMMessage {
     EMMULNASTransport(EMMULNASTransport),
     EMMCSServiceNotification(EMMCSServiceNotification),
     EMMDLGenericNASTransport(EMMDLGenericNASTransport),
-    EMMULGenericNASTransport(EMMULGenericNASTransport)
+    EMMULGenericNASTransport(EMMULGenericNASTransport),
 }
 
-pub fn parse_emm_nas<R: Read+Seek>(emm_type: EMMType, mut reader: Reader<R>) -> Result<EMMMessage, DekuError> {
+pub fn parse_emm_nas<R: Read + Seek>(
+    emm_type: EMMType,
+    mut reader: Reader<R>,
+) -> Result<EMMMessage, DekuError> {
     Ok(match emm_type {
         EMMType::AttachRequest => EMMMessage::EMMAttachRequest(EMMAttachRequest::from_reader_with_ctx(&mut reader, ())?),
         EMMType::AttachAccept => EMMMessage::EMMAttachAccept(EMMAttachAccept::from_reader_with_ctx(&mut reader, ())?),
@@ -96,7 +123,8 @@ pub fn parse_emm_nas<R: Read+Seek>(emm_type: EMMType, mut reader: Reader<R>) -> 
             // save a bookmark to the beginning of the message in case we need
             // to retry
             let cursor = reader.into_inner();
-            let bookmark = cursor.seek(SeekFrom::Current(0))
+            let bookmark = cursor
+                .seek(SeekFrom::Current(0))
                 .map_err(|err| DekuError::Io(err.kind()))?;
             let mut reader = Reader::new(cursor);
 
@@ -106,10 +134,14 @@ pub fn parse_emm_nas<R: Read+Seek>(emm_type: EMMType, mut reader: Reader<R>) -> 
             } else {
                 // rewind, then attempt an MT parse
                 let cursor = reader.into_inner();
-                cursor.seek(SeekFrom::Start(bookmark))
+                cursor
+                    .seek(SeekFrom::Start(bookmark))
                     .map_err(|err| DekuError::Io(err.kind()))?;
                 let mut reader = Reader::new(cursor);
-                EMMMessage::EMMDetachRequestMT(EMMDetachRequestMT::from_reader_with_ctx(&mut reader, ())?)
+                EMMMessage::EMMDetachRequestMT(EMMDetachRequestMT::from_reader_with_ctx(
+                    &mut reader,
+                    (),
+                )?)
             }
         },
         EMMType::DetachAccept => EMMMessage::EMMDetachAccept(EMMDetachAccept::from_reader_with_ctx(&mut reader, ())?),
