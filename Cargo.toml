@@ -3,16 +3,10 @@ name = "pycrate-rs"
 version = "0.1.0"
 edition = "2021"
 
-[[bin]]
-name = "serialize"
-path = "src/serialize.rs"
-
 [dependencies]
 clap = { version = "4.5.30", features = ["derive"] }
 deku = { version = "0.18.1", features = ["std", "alloc", "logging"] }
 env_logger = "0.11.6"
 log = "0.4.26"
-pcap-file = "2.0.0"
 serde = { version = "1.0.217", features = ["derive"] }
-serde_json = "1.0.138"
 thiserror = "2.0.12"
