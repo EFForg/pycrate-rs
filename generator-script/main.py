@@ -1,6 +1,6 @@
 import binascii
 import os
-from typing import Tuple, Dict
+from typing import Tuple, Dict, Optional
 from scapy.utils import rdpcap
 from pycrate_mobile import NASLTE
 from pycrate_core import elt
@@ -59,8 +59,11 @@ def get_test_cases(pcap_dir_filepath: str) -> Tuple[list[str], list[str]]:
     return (emm_tests, esm_tests)
 
 
-def main(output_filepath: str, pcap_dir_filepath: str):
-    emm_tests, esm_tests = get_test_cases(pcap_dir_filepath)
+def main(output_filepath: str, pcap_dir_filepath: Optional[str]):
+    if pcap_dir_filepath is None:
+        emm_tests, esm_tests = [], []
+    else:
+        emm_tests, esm_tests = get_test_cases(pcap_dir_filepath)
     emm_classes = list(NASLTE.EMMTypeMOClasses.values())
     emm_classes.append(NASLTE.EMMTypeMTClasses[69])  # add in the MT version of DetachRequest
     generate_module(os.path.join(output_filepath, 'emm'), emm_classes, [
@@ -82,4 +85,9 @@ def main(output_filepath: str, pcap_dir_filepath: str):
 
 if __name__ == "__main__":
     import sys
-    main(sys.argv[1], sys.argv[2])
+    output_filepath = sys.argv[1]
+    if len(sys.argv) == 2:
+        pcap_dir_filepath = None
+    else:
+        pcap_dir_filepath = sys.argv[2]
+    main(output_filepath, pcap_dir_filepath)
