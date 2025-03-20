@@ -1,9 +1,10 @@
-from typing import List, Optional
+from typing import List, Optional, cast
 from pycrate_core import elt
 from pycrate_core.base import Uint, Buf, Uint8, Uint16
 from enum import StrEnum, IntEnum, auto
 
 from generator.util import indent, upper_camel_case, snake_case
+from generator.deku import DekuAttributes
 
 
 class Layer3Type(StrEnum):
@@ -47,10 +48,11 @@ class Layer3Type(StrEnum):
 class Layer3Wrapper:
     def __init__(self, obj: elt.Envelope) -> None:
         self.type = Layer3Type(type(obj).__name__)
+        self.tag: Optional[int]
         if self.type.is_tagged():
             assert obj[0]._name == 'T'
             assert isinstance(obj[0], Uint)
-            self.tag = obj[0].get_val()
+            self.tag = cast(int, obj[0].get_val())
         else:
             self.tag = None
 
@@ -153,55 +155,31 @@ class RustStructField:
         self.is_final_buf = False
 
     def _deku_attrs(self) -> str:
-        deku_attrs = []
-        ctx = []
+        attrs = DekuAttributes()
+        if self.bit_length is not None:
+            attrs.set_size(self.bit_length)
         if self.layer3_wrapper is not None:
+            attrs.mark_as_wrapped()
             if self.layer3_wrapper.tag is not None:
-                ctx.append(f'Tag({self.layer3_wrapper.tag})')
-            if self.bit_length is not None:
-                if self.bit_length % 8 == 0:
-                    deku_attrs.append(f'bytes = {int(self.bit_length / 8)}')
-                else:
-                    deku_attrs.append(f'bits = {self.bit_length}')
-        else:
-            if self.type == RustPrimitiveType.VecU8:
-                if self.is_final_buf:
-                    deku_attrs.append('count = "byte_size - deku::byte_offset"')
-                else:
-                    assert self.bit_length is not None
-                    assert self.bit_length % 8 == 0
-                    byte_length = int(self.bit_length / 8)
-                    deku_attrs.append(f'count = "{byte_length}"')
-            elif self.bit_length is not None and not isinstance(self.type, RustEnum):
-                if self.bit_length % 8 == 0:
-                    deku_attrs.append(f'bytes = {int(self.bit_length / 8)}')
-                else:
-                    deku_attrs.append(f'bits = {self.bit_length}')
-
+                attrs.set_tag(self.layer3_wrapper.tag)
+        if self.type == RustPrimitiveType.VecU8:
+            attrs.mark_as_buf(self.is_final_buf)
+        elif isinstance(self.type, RustEnum):
+            attrs.mark_as_enum(self.type.name, self.type.variants[0].name)
         if isinstance(self.type, RustStruct):
             if self.type.is_variable_bitfield or self.type.contains_final_buf():
-                ctx.append("NeedsByteSize")
+                attrs.set_needs_byte_size(True)
         elif self._is_layer3_buffer():
-            ctx.append("NeedsByteSize")
+            attrs.set_needs_byte_size(True)
 
         if self.bit_padding is not None:
-            deku_attrs.append(f'pad_bits_before = "{self.bit_padding}"')
+            attrs.set_bit_padding(self.bit_padding)
 
-        if self.type is not None and not isinstance(self.type, RustEnum) and self.type.is_big_endian():
-            deku_attrs.append('endian = "big"')
+        if self.type is not None:
+            attrs.set_big_endian(self.type.is_big_endian())
 
-        if self.is_optional:
-            deku_attrs.append('cond = "deku::byte_offset < byte_size"')
-            if isinstance(self.type, RustEnum):
-                default_name = f"{self.type.name}::{self.type.variants[0].name}"
-                deku_attrs.append(f'default = "{default_name}"')
-
-        if len(ctx):
-            deku_attrs.append(f'ctx = "{', '.join(ctx)}"')
-        deku_part = ''
-        if len(deku_attrs):
-            deku_part = f'#[deku({', '.join(deku_attrs)})] '
-        return deku_part
+        attrs.set_is_optional(self.is_optional)
+        return attrs.to_rust()
 
     def _is_layer3_buffer(self) -> bool:
         is_wrapped = self.layer3_wrapper is not None
@@ -210,12 +188,17 @@ class RustStructField:
 
     def to_rust(self) -> str:
         # special case for Type4TLV<Vec<u8>>
-        type_name = '()' if self.type is None else self.type.rust_type_name()
+        if self._is_layer3_buffer():
+            type_name = 'Layer3Buffer'
+        elif self.type is None:
+            type_name = '()'
+        else:
+            type_name = self.type.rust_type_name()
+
         if self.layer3_wrapper is not None:
-            if self._is_layer3_buffer():
-                type_name = 'Layer3Buffer'
             wrapper_name = str(self.layer3_wrapper.type)
             type_name = f"{wrapper_name}<{type_name}>"
+
         deku_part = self._deku_attrs()
         return f'{deku_part}pub {self.name}: {type_name},'
 
