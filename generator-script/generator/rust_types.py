@@ -10,7 +10,8 @@ from generator.deku import DekuAttributes
 class Layer3Type(StrEnum):
     Type1V = 'Type1V'
     Type1TV = 'Type1TV'
-    Type2 = 'Type2'
+    # unused
+    # Type2 = 'Type2'
     Type3V = 'Type3V'
     Type3TV = 'Type3TV'
     Type4LV = 'Type4LV'

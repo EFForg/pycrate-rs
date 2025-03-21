@@ -1,19 +1,54 @@
 use std::io::{Cursor, Read, Seek};
-use std::marker::PhantomData;
 
 use deku::ctx::{BitSize, ByteSize, Endian};
 use deku::prelude::*;
 use serde::Serialize;
 
-// A kind of marker type that exists as kind of a hack. This is needed because
-// the following types, there's a lot of impls that look like `impl DekuRead<A>
-// for Type<B> where B: DekuRead<C>`, and frequently that impl needs to be
-// different depending on whether C includes the `ByteSize` context. But Rust
-// doesn't allow separate `impl DekuRead<A> for Type<B> where B: DekuRead<C>`
-// for different values of C (this is a feature known as "trait
-// specialization"). So, we shoehorn this empty type into `A` whenever `C`
-// differs based on the existence of `ByteSize`.
+// A marker type that sort of a hack around Rust's lack of impl specialization.
+// It's used whenever a contained type needs a ByteSize context value sent to
+// its DekuRead impl. For example, suppose we have a type `Foo` whose DekuRead
+// impl needs to know how big its buffer is, and it's contained by a Layer3TV.
+// Then, it should be declared like:
+//
+// ```
+// struct SomeStruct {
+//     #[deku(ctx = "NeedsByteSize")]
+//     pub foo: Layer3TV<Foo>,
+// }
+// ```
 pub struct NeedsByteSize;
+
+#[derive(Copy, Clone, Debug)]
+pub struct Tag(pub u8);
+
+impl From<Tag> for u8 {
+    fn from(t: Tag) -> u8 {
+        t.0
+    }
+}
+
+// checks whether the next byte matches the given tag. if it does, the reader will remain
+// advanced, and if not, it'll be rewound by 1 byte.
+fn check_tag<R: Read + Seek>(
+    reader: &mut Reader<R>,
+    bit_size: BitSize,
+    Tag(tag): Tag,
+) -> Result<bool, DekuError> {
+    if reader.end() {
+        return Ok(false);
+    }
+    let read_tag = u8::from_reader_with_ctx(reader, bit_size)?;
+    if read_tag == tag {
+        Ok(true)
+    } else {
+        // the tag didn't match, so rewind and pretend this never happened
+        // reader.seek_last_read()
+        reader
+            .seek_relative(-1)
+            .map_err(|err| DekuError::Io(err.kind()))?;
+        Ok(false)
+    }
+}
 
 #[derive(Serialize, DekuRead, Debug, Clone)]
 #[deku(ctx = "ByteSize(byte_size): ByteSize")]
@@ -32,8 +67,8 @@ impl PartialEq<Vec<u8>> for Layer3Buffer {
 
 #[derive(Serialize, Debug, Clone)]
 pub struct Type1TV<T> {
-    tag: u8,
-    v: u8,
+    pub tag: u8,
+    pub v: u8,
     pub inner: Option<T>,
 }
 
@@ -54,6 +89,8 @@ where
         }
         let t = u8::from_reader_with_ctx(reader, BitSize(4))?;
         let v = u8::from_reader_with_ctx(reader, BitSize(4))?;
+        // annoyingly we have to duplicate `check_tag()` here, since Type1Vs
+        // have their tag and value packed into the same byte
         if t != tag.0 {
             reader
                 .seek_relative(-1)
@@ -99,14 +136,6 @@ where
     }
 }
 
-// maybe unused?
-#[derive(Serialize, DekuRead, DekuWrite, Debug, Clone)]
-pub struct Type2<T> {
-    pub tag: u8,
-    #[deku(skip)]
-    pub _phantom: PhantomData<T>,
-}
-
 #[derive(Serialize, Debug, Clone)]
 pub struct Type3V<T> {
     pub inner: T,
@@ -146,7 +175,7 @@ where
 
 #[derive(Serialize, Debug, Clone)]
 pub struct Type3TV<T> {
-    tag: u8,
+    pub tag: u8,
     pub inner: Option<T>,
 }
 
@@ -243,29 +272,6 @@ where
     }
 }
 
-// checks whether the next byte matches the given tag. if it does, the reader will remain
-// advanced, and if not, it'll be rewound by 1 byte.
-fn check_tag<R: Read + Seek>(
-    reader: &mut Reader<R>,
-    bit_size: BitSize,
-    Tag(tag): Tag,
-) -> Result<bool, DekuError> {
-    if reader.end() {
-        return Ok(false);
-    }
-    let read_tag = u8::from_reader_with_ctx(reader, bit_size)?;
-    if read_tag == tag {
-        Ok(true)
-    } else {
-        // the tag didn't match, so rewind and pretend this never happened
-        // reader.seek_last_read()
-        reader
-            .seek_relative(-1)
-            .map_err(|err| DekuError::Io(err.kind()))?;
-        Ok(false)
-    }
-}
-
 // workaround for https://github.com/sharksforarms/deku/issues/527, which
 // results in a possible panic if we read more than 16 bytes at a time
 fn read_bytes_from_reader<R: Read + Seek>(
@@ -289,19 +295,10 @@ fn read_bytes_from_reader<R: Read + Seek>(
     Ok(result)
 }
 
-#[derive(Copy, Clone, Debug)]
-pub struct Tag(pub u8);
-
-impl From<Tag> for u8 {
-    fn from(t: Tag) -> u8 {
-        t.0
-    }
-}
-
 #[derive(Serialize, Debug, Clone, Default)]
 pub struct Type4TLV<T> {
-    tag: u8,
-    length: u8,
+    pub tag: u8,
+    pub length: u8,
     pub inner: Option<T>,
 }
 
@@ -434,8 +431,8 @@ where
 
 #[derive(Serialize, Debug, Clone)]
 pub struct Type6TLVE<T> {
-    tag: u8,
-    length: u16,
+    pub tag: u8,
+    pub length: u16,
     pub inner: Option<T>,
 }
 

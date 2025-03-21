@@ -31,24 +31,20 @@ use super::generated::emm::{
 #[derive(DekuRead, DekuWrite, Debug)]
 #[deku(id_type = "u8")]
 pub enum EMMType {
-    // attach / detach
     #[deku(id = 65)] AttachRequest,
     #[deku(id = 66)] AttachAccept,
     #[deku(id = 67)] AttachComplete,
     #[deku(id = 68)] AttachReject,
     #[deku(id = 69)] DetachRequest,
     #[deku(id = 70)] DetachAccept,
-    // TAU
     #[deku(id = 72)] TrackingAreaUpdateRequest,
     #[deku(id = 73)] TrackingAreaUpdateAccept,
     #[deku(id = 74)] TrackingAreaUpdateComplete,
     #[deku(id = 75)] TrackingAreaUpdateReject,
-    // serv request
     #[deku(id = 76)] ExtendedServiceRequest,
     #[deku(id = 77)] ControlPlaneServiceRequest,
     #[deku(id = 78)] ServiceReject,
     #[deku(id = 79)] ServiceAccept,
-    // identification / authentication
     #[deku(id = 80)] GUTIReallocationCommand,
     #[deku(id = 81)] GUTIReallocationComplete,
     #[deku(id = 82)] AuthenticationRequest,
@@ -60,7 +56,6 @@ pub enum EMMType {
     #[deku(id = 93)] SecurityModeCommand,
     #[deku(id = 94)] SecurityModeComplete,
     #[deku(id = 95)] SecurityModeReject,
-    // misc
     #[deku(id = 96)] EMMStatus,
     #[deku(id = 97)] EMMInformation,
     #[deku(id = 98)] DownlinkNASTransport,

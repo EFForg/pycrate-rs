@@ -1,3 +1,4 @@
+from typing import Optional, Tuple
 import unittest
 
 
@@ -11,14 +12,14 @@ class DekuAttributes:
     def __init__(self) -> None:
         self.is_buf = False
         self.is_final_buf = False
-        self.default_enum_variant = None
-        self.bit_padding = None
+        self.default_enum_variant: Optional[Tuple[str, str]] = None
+        self.bit_padding: Optional[int] = None
         self.is_big_endian = False
         self.is_optional = False
         self.needs_byte_size = False
         self.is_wrapped = False
-        self.size = None
-        self.tag = None
+        self.size: Optional[Tuple[str, int]] = None
+        self.tag: Optional[int] = None
 
     def set_tag(self, tag: int) -> None:
         self.tag = tag
@@ -77,7 +78,7 @@ class DekuAttributes:
                     attrs.append(f'{units} = {value}')
 
     def to_rust(self) -> str:
-        attrs = []
+        attrs: list[str] = []
         self._set_size_or_count(attrs)
         if self.is_wrapped or not self._is_enum():
             if self.bit_padding:
@@ -118,7 +119,9 @@ class TestNamer(unittest.TestCase):
     def test_is_optional(self):
         attr = DekuAttributes()
         attr.set_is_optional(True)
-        assert attr.to_rust() == attrfy(['cond = "deku::byte_offset < byte_size"'])
+        assert attr.to_rust() == attrfy([
+            'cond = "deku::byte_offset < byte_size"'
+        ])
 
         attr.mark_as_enum('EnumName', 'DefaultVariant')
         assert attr.to_rust() == attrfy([
