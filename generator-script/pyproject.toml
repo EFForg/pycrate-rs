@@ -1,0 +1,20 @@
+[project]
+name = "pycrate-rs-generator"
+version = "0.1"
+dependencies = [
+    "inflect==7.5.0",
+    "iniconfig==2.0.0",
+    "more-itertools==10.6.0",
+    "packaging==24.2",
+    "pluggy==1.5.0",
+    "pycrate==0.7.8",
+    "pytest==8.3.5",
+    "scapy==2.6.1",
+    "typeguard==4.4.1",
+    "typing_extensions==4.12.2",
+]
+
+
+[[tool.mypy.overrides]]
+module = ["pycrate_core.*"]
+follow_untyped_imports = true
